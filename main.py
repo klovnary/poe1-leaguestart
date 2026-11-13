@@ -81,6 +81,7 @@ class App:
 
         self.timer = tk.Label(root, text="0:00", bg=BG, fg=GRAY, font=self.font(30, bold=True), anchor="e")
         self.timer.pack(fill="x", padx=8, pady=(10, 0))
+        self.timer.bind("<Button-1>", lambda e: self.tracker.toggle_pause())   # click the timer to pause
         self.segment = tk.Label(root, text="", bg=BG, fg=GRAY, font=self.font(10), anchor="e")
         self.segment.pack(fill="x", padx=8)
 
@@ -111,6 +112,7 @@ class App:
         self.updater.check_in_background()
 
         self.menu = tk.Menu(root, tearoff=0)
+        self.menu.add_command(label="Pause / resume (P)", command=self.tracker.toggle_pause)
         self.menu.add_command(label="Split voidstone (Space)", command=self.split)
         self.menu.add_command(label="Undo voidstone", command=self.undo)
         self.menu.add_separator()
@@ -120,6 +122,8 @@ class App:
                                   command=lambda: root.attributes("-topmost", self.on_top.get()))
         root.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
         root.bind("<space>", lambda e: self.split())
+        root.bind("<p>", lambda e: self.tracker.toggle_pause())
+        root.bind("<P>", lambda e: self.tracker.toggle_pause())
         root.protocol("WM_DELETE_WINDOW", self.close)
 
         if not self.tracker.log_path:
@@ -265,14 +269,15 @@ class App:
                 delta.config(text="")
 
         # Big timer
-        if not run["started"]:
+        if not run["started"] or run.get("paused"):
             color = GRAY
         elif phase == "done" or not pb or current is None:
             color = AHEAD
         else:
             color = AHEAD if now_time <= pb[current] else BEHIND
         self.timer.config(text=fmt(now_time), fg=color)
-        self.segment.config(text="")
+        self.segment.config(text="PAUSED - press P or click the timer" if run.get("paused") else "",
+                            fg=GOLD)
 
         # Info lines
         lines = []

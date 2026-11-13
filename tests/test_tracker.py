@@ -146,6 +146,15 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(self.t.run["league_key"], "Covens of Umbra")
         self.assertEqual(self.t.run["character"], "Rags")
 
+    def test_pause_stops_the_clock(self):
+        self.write(area("10:00:00", 1, "1_1_1", 1), line("10:01:00", ": x"))
+        self.t.toggle_pause()
+        self.write(line("10:02:00", ": x"), line("10:03:00", ": x"))
+        self.assertEqual(self.t.timer(datetime(2026, 12, 1, 10, 3, 30)), 60)   # frozen
+        self.t.toggle_pause()
+        self.write(line("10:04:00", ": x"))
+        self.assertEqual(self.t.run["campaign_time"], 120)
+
 
 if __name__ == "__main__":
     unittest.main()

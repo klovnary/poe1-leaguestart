@@ -46,7 +46,8 @@ def new_run():
         "league_key": None,     # the league from the date list (decides when a new run starts)
         "offset": 0,            # how far into Client.txt we've read
         "last_ts": None,        # time of the last log line
-        "started": False,       # timer running (entered The Twilight Strand, or first level up)
+        "started": False,
+        "paused": False,        # paused by you (break): no time is counted       # timer running (entered The Twilight Strand, or first level up)
         "character": None,      # league starter = first character to level up
         "level": 1,
         "deaths": 0,
@@ -131,7 +132,7 @@ class Tracker:
         if phase == "done":
             return self.run["atlas_splits"][-1]
         t = self.run["campaign_time"] if phase == "campaign" else self.run["atlas_time"]
-        if self.run["started"] and self.run["last_ts"]:
+        if self.run["started"] and self.run["last_ts"] and not self.run.get("paused"):
             gap = ((now or datetime.now()) - datetime.strptime(self.run["last_ts"], TIME_FORMAT)).total_seconds()
             if 0 < gap <= MAX_GAP:
                 t += gap
@@ -164,6 +165,10 @@ class Tracker:
     def set_log_path(self, path):
         self.log_path = path
         self.run["offset"] = os.path.getsize(path)
+        self.save()
+
+    def toggle_pause(self):
+        self.run["paused"] = not self.run.get("paused")
         self.save()
 
     def split_voidstone(self):
@@ -229,7 +234,7 @@ class Tracker:
         # played time since the last line goes to whichever part we're in
         if run["last_ts"] and run["started"]:
             gap = (ts - datetime.strptime(run["last_ts"], TIME_FORMAT)).total_seconds()
-            if 0 < gap <= MAX_GAP:
+            if 0 < gap <= MAX_GAP and not run.get("paused"):
                 if self.phase() == "campaign":
                     run["campaign_time"] += gap
                 elif self.phase() == "atlas":
