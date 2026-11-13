@@ -76,6 +76,29 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(self.t.timer(datetime(2026, 12, 1, 10, 0, 45)), 45)
         self.assertEqual(self.t.timer(datetime(2026, 12, 1, 10, 30, 0)), 0)   # AFK
 
+    def test_no_reading_before_a_league(self):
+        self.t.run["league"] = ""
+        self.write(line("10:00:00", ": Rags (Duelist) is now level 2"))
+        self.assertIsNone(self.t.run["character"])
+
+    def test_big_log_is_read_in_small_steps(self):
+        import tracker
+        old = tracker.CHUNK
+        tracker.CHUNK = 200
+        try:
+            lines = [line("10:00:00", ": Rags (Duelist) is now level 2")]
+            lines += [line(f"10:00:{s:02d}", ": filler") for s in range(1, 40)]
+            with open(self.log, "a") as f:
+                f.writelines(lines)
+            steps = 1
+            while self.t.poll():
+                steps += 1
+            self.assertGreater(steps, 5)
+            self.assertEqual(self.t.run["offset"], os.path.getsize(self.log))
+            self.assertEqual(self.t.timer(datetime(2026, 12, 1, 10, 0, 39)), 39)
+        finally:
+            tracker.CHUNK = old
+
 
 if __name__ == "__main__":
     unittest.main()

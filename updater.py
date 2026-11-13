@@ -12,6 +12,7 @@ import os
 import sys
 import subprocess
 import threading
+import time
 import urllib.request
 
 REPO = "klovnary/poe1-leaguestart"
@@ -46,21 +47,43 @@ def is_app_file(path):
     return "/" not in path and path.endswith(".py")
 
 
+CHECK_EVERY = 30 * 60   # seconds between update checks
+
+
+def version_text():
+    """e.g. 'v0.1.0 · 5303d8a' for an installed copy, 'dev' when run from source."""
+    if not installed_copy():
+        return "dev"
+    try:
+        with open(VERSION_FILE, encoding="utf-8-sig") as f:
+            v = json.load(f)
+        return f"v{v.get('installer', '?')} · {v.get('commit', '')[:7]}"
+    except (OSError, ValueError):
+        return "v?"
+
+
 class Updater:
     def __init__(self):
-        self.status = ""          # what to show in the window
+        self.status = "" if installed_copy() else "updates off (dev copy)"
         self.ready = False        # files are downloaded; restart to use them
 
     def check_in_background(self):
         if installed_copy():
-            threading.Thread(target=self._update, daemon=True).start()
+            threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        while not self.ready:
+            self._update()
+            time.sleep(CHECK_EVERY)
 
     def _update(self):
+        self.status = "checking for updates..."
         try:
             with open(VERSION_FILE, encoding="utf-8-sig") as f:
                 version = json.load(f)
             newest = get_json(f"https://api.github.com/repos/{REPO}/commits/{BRANCH}")["sha"]
             if newest == version.get("commit"):
+                self.status = "up to date"
                 return
 
             tree = get_json(f"https://api.github.com/repos/{REPO}/git/trees/{newest}")["tree"]
@@ -92,10 +115,12 @@ class Updater:
             with open(VERSION_FILE, "w", encoding="utf-8") as f:
                 json.dump(version, f, indent=2)
             if new_files:
-                self.status = "Update ready - click to restart"
+                self.status = "update ready - click to restart"
                 self.ready = True
+            else:
+                self.status = "up to date"
         except Exception:
-            self.status = ""      # offline, GitHub busy, private repo... try again next start
+            self.status = "couldn't check for updates"
 
 
 def restart():

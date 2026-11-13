@@ -13,6 +13,7 @@ from datetime import datetime
 CAMPAIGN = [f"Act {n}" for n in range(1, 11)]
 ATLAS = [f"Voidstone {n}" for n in range(1, 5)]
 
+CHUNK = 500_000  # bytes of Client.txt read per step
 MAX_GAP = 300   # seconds between log lines; longer = AFK/offline, not counted
 TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 
@@ -154,22 +155,31 @@ class Tracker:
     # ---------- reading the log ----------
 
     def poll(self):
-        """Read new lines from Client.txt. Returns True if anything was read."""
-        if not self.log_path or not os.path.exists(self.log_path):
+        """Read new lines from Client.txt, at most CHUNK bytes at a time so the
+        window never freezes. Returns True if there's more waiting to be read."""
+        if not self.run["league"] or not self.log_path or not os.path.exists(self.log_path):
             return False
-        if os.path.getsize(self.log_path) < self.run["offset"]:
+        size = os.path.getsize(self.log_path)
+        if size < self.run["offset"]:
             self.run["offset"] = 0     # the game started a fresh log
+        if size == self.run["offset"]:
+            return False
         with open(self.log_path, "rb") as f:
             f.seek(self.run["offset"])
-            chunk = f.read()
+            chunk = f.read(CHUNK)
         end = chunk.rfind(b"\n")       # only whole lines
         if end == -1:
+            if len(chunk) == CHUNK:    # a giant broken line: skip it
+                self.run["offset"] += CHUNK
+                return True
             return False
         self.run["offset"] += end + 1
         for line in chunk[: end + 1].decode("utf-8", errors="ignore").splitlines():
             self.read_line(line)
-        self.save()
-        return True
+        more = self.run["offset"] < size
+        if not more:
+            self.save()    # saving once caught up keeps each step quick
+        return more
 
     def read_line(self, line):
         run = self.run

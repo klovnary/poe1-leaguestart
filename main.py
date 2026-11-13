@@ -4,6 +4,7 @@ Right-click the window for the menu. Click the highlighted voidstone (or press
 Space) when you get it.
 Not affiliated with or endorsed by Grinding Gear Games.
 """
+import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 
@@ -79,10 +80,14 @@ class App:
             right.pack(side="right")
             self.info.append((left, right))
 
+        # Tiny bottom bar: version on the left, update status on the right
         tk.Label(root, text="Not affiliated with Grinding Gear Games", bg=BG, fg="#555",
-                 font=(FONT, 7)).pack(side="bottom", pady=4)
-        self.update_label = tk.Label(root, text="", bg=BG, fg=GOLD, font=(FONT, 9, "underline"), cursor="hand2")
-        self.update_label.pack(side="bottom")
+                 font=(FONT, 7)).pack(side="bottom", pady=(0, 3))
+        bar = tk.Frame(root, bg=BG)
+        bar.pack(side="bottom", fill="x", padx=8)
+        tk.Label(bar, text=updater.version_text(), bg=BG, fg="#555", font=(FONT, 7)).pack(side="left")
+        self.update_label = tk.Label(bar, text="", bg=BG, fg="#555", font=(FONT, 7))
+        self.update_label.pack(side="right")
         self.update_label.bind("<Button-1>", lambda e: self.restart_for_update())
         self.updater = updater.Updater()
         self.updater.check_in_background()
@@ -97,6 +102,7 @@ class App:
                                   command=lambda: root.attributes("-topmost", self.on_top.get()))
         root.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
         root.bind("<space>", lambda e: self.split())
+        root.protocol("WM_DELETE_WINDOW", self.close)
 
         if not self.tracker.log_path:
             root.after(300, self.choose_log)
@@ -143,8 +149,15 @@ class App:
     # ---------- loops ----------
 
     def read_log(self):
-        self.tracker.poll()
-        self.root.after(1000, self.read_log)
+        more = self.tracker.poll()
+        # catching up on a big log: keep reading in small steps so the window stays responsive
+        self.root.after(10 if more else 1000, self.read_log)
+
+    def close(self):
+        try:
+            self.tracker.save()
+        finally:
+            self.root.destroy()
 
     def draw(self):
         t, run = self.tracker, self.tracker.run
@@ -223,7 +236,10 @@ class App:
             left.config(text=a)
             right.config(text=b, fg=color)
 
-        self.update_label.config(text=self.updater.status)
+        ready = self.updater.ready
+        self.update_label.config(text=self.updater.status, fg=GOLD if ready else "#555",
+                                 cursor="hand2" if ready else "",
+                                 font=(FONT, 7, "underline") if ready else (FONT, 7))
         self.root.after(200, self.draw)
 
 
@@ -231,3 +247,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     App(root)
     root.mainloop()
+    os._exit(0)   # make sure nothing (like an update check) keeps the program running
