@@ -1,0 +1,5 @@
+League Start Tracker is an unofficial, fan-made tool. It is not affiliated with,
+endorsed by, or sponsored by Grinding Gear Games in any way. Path of Exile and all
+related names, artwork and game data are trademarks or copyrights of Grinding Gear Games.
+
+It never touches the game. It only reads the game's Client.txt log file.
