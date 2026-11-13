@@ -8,6 +8,9 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 
+from datetime import datetime
+
+import leagues
 import updater
 from tracker import Tracker
 
@@ -96,7 +99,7 @@ class App:
         self.menu.add_command(label="Split voidstone (Space)", command=self.split)
         self.menu.add_command(label="Undo voidstone", command=self.undo)
         self.menu.add_separator()
-        self.menu.add_command(label="New league...", command=self.new_league)
+        self.menu.add_command(label="Reset run...", command=self.new_league)
         self.menu.add_command(label="Find Client.txt...", command=self.choose_log)
         self.menu.add_checkbutton(label="Always on top", variable=self.on_top,
                                   command=lambda: root.attributes("-topmost", self.on_top.get()))
@@ -106,8 +109,6 @@ class App:
 
         if not self.tracker.log_path:
             root.after(300, self.choose_log)
-        elif not self.tracker.run["league"]:
-            root.after(300, self.new_league)
 
         self.read_log()
         self.draw()
@@ -125,10 +126,13 @@ class App:
             self.split()
 
     def new_league(self):
+        """Manual reset. Normally not needed: a new league starts by itself when a
+        new character enters The Twilight Strand after the league's start date."""
         if self.tracker.run["league"] and not messagebox.askyesno(
-                "New league", "Reset and start a new league? Your PB and golds are kept."):
+                "Reset run", "Reset the timer and start over? Your PB and golds are kept."):
             return
-        name = simpledialog.askstring("New league", "League name:", parent=self.root)
+        name = simpledialog.askstring("Reset run", "League name:", parent=self.root,
+                                      initialvalue=leagues.league_at(datetime.now()))
         if name:
             self.tracker.new_league(name.strip())
 
@@ -137,8 +141,6 @@ class App:
                                           filetypes=[("Client.txt", "Client.txt"), ("Text", "*.txt")])
         if path:
             self.tracker.set_log_path(path)
-            if not self.tracker.run["league"]:
-                self.new_league()
 
     def restart_for_update(self):
         if self.updater.ready:
@@ -168,7 +170,8 @@ class App:
 
         # Title
         part = {"campaign": "Campaign", "atlas": "Atlas", "done": "Done!"}[phase]
-        self.title.config(text=f"{run['league'] or 'Path of Exile'} - {part}")
+        league = run["league"] if run["started"] else leagues.league_at(datetime.now())
+        self.title.config(text=f"{league} - {part}")
         if run["character"]:
             self.subtitle.config(text=f"{run['character']}  ·  Lvl {run['level']}  ·  Deaths {run['deaths']}")
         elif not t.log_path:
@@ -176,7 +179,7 @@ class App:
         elif run["started"]:
             self.subtitle.config(text="Go! (character shows at your first level up)")
         else:
-            self.subtitle.config(text="Timer starts when you enter The Twilight Strand")
+            self.subtitle.config(text="Starts when a new character enters The Twilight Strand")
 
         # Splits
         for i, (row, name, delta, time) in enumerate(self.rows):

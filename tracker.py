@@ -10,6 +10,8 @@ import os
 import re
 from datetime import datetime
 
+import leagues
+
 CAMPAIGN = [f"Act {n}" for n in range(1, 11)]
 ATLAS = [f"Voidstone {n}" for n in range(1, 5)]
 
@@ -39,7 +41,8 @@ def save_folder():
 
 def new_run():
     return {
-        "league": "",
+        "league": "",           # name shown in the window
+        "league_key": None,     # the league from the date list (decides when a new run starts)
         "offset": 0,            # how far into Client.txt we've read
         "last_ts": None,        # time of the last log line
         "started": False,       # timer running (entered The Twilight Strand, or first level up)
@@ -76,8 +79,12 @@ class Tracker:
             self.log_path = data.get("log_path")
         if self.run["character"] and not self.run["started"]:
             self.run["started"] = True   # save from before "started" existed
+        if self.run["league"] and not self.run["league_key"]:
+            self.run["league_key"] = self.run["league"]   # save from before league_key existed
         if not self.log_path or not os.path.exists(self.log_path):
             self.log_path = next((p for p in LOG_PATHS if os.path.exists(p)), None)
+        if not self.run["league"] and self.run["offset"] == 0 and self.log_path:
+            self.run["offset"] = os.path.getsize(self.log_path)   # first run: watch from now on
 
     def save(self):
         temp = self.save_path + ".tmp"
@@ -120,11 +127,21 @@ class Tracker:
     # ---------- actions ----------
 
     def new_league(self, name):
+        """Manual reset from the menu (e.g. a restart, or a name like "Covens of Umbra HC")."""
         self.run = new_run()
         self.run["league"] = name
+        self.run["league_key"] = leagues.league_at(datetime.now())
         if self.log_path and os.path.exists(self.log_path):
             self.run["offset"] = os.path.getsize(self.log_path)   # skip old lines
         self.save()
+
+    def _auto_new_run(self, league):
+        """A new character entered The Twilight Strand in a different league: fresh run.
+        Reading carries on from the same spot in the log; PBs and golds are kept."""
+        old = self.run
+        self.run = new_run()
+        self.run["league"] = self.run["league_key"] = league
+        self.run["offset"], self.run["last_ts"] = old["offset"], old["last_ts"]
 
     def set_log_path(self, path):
         self.log_path = path
@@ -160,7 +177,7 @@ class Tracker:
     def poll(self):
         """Read new lines from Client.txt, at most CHUNK bytes at a time so the
         window never freezes. Returns True if there's more waiting to be read."""
-        if not self.run["league"] or not self.log_path or not os.path.exists(self.log_path):
+        if not self.log_path or not os.path.exists(self.log_path):
             return False
         size = os.path.getsize(self.log_path)
         if size < self.run["offset"]:
@@ -212,6 +229,8 @@ class Tracker:
             if run["character"] is None:
                 run["character"] = m.group(1)   # the first character to level up is the league starter
                 run["started"] = True           # backup start, if you never passed the Strand
+                if not run["league_key"]:
+                    run["league"] = run["league_key"] = leagues.league_at(ts)
             if m.group(1) == run["character"]:
                 run["level"] = int(m.group(3))
             return
@@ -223,8 +242,13 @@ class Tracker:
 
         m = GENERATING.search(line)
         if m:
-            # Loading into The Twilight Strand (1_1_1) on a new character starts the timer
-            if m.group(2) == "1_1_1" and not run["started"]:
+            # Loading into The Twilight Strand (1_1_1) on a new character starts the timer,
+            # and a new league (by date) starts a fresh run
+            if m.group(2) == "1_1_1":
+                league = leagues.league_at(ts)
+                if league != run["league_key"]:
+                    self._auto_new_run(league)
+                    run = self.run
                 run["started"] = True
             if run["started"]:
                 self._entered_area(m.group(2), int(m.group(1)), m.group(3))

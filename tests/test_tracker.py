@@ -1,4 +1,5 @@
 """python -m unittest discover tests"""
+import json
 import os
 import sys
 import tempfile
@@ -9,12 +10,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tracker import Tracker
 
 
-def line(t, msg):
-    return f"2026/12/01 {t} 1 a [INFO Client 1] {msg}\n"
+def line(t, msg, day="2026/12/01"):
+    return f"{day} {t} 1 a [INFO Client 1] {msg}\n"
 
 
-def area(t, level, area_id, seed):
-    return line(t, f'Generating level {level} area "{area_id}" with seed {seed}')
+def area(t, level, area_id, seed, day="2026/12/01"):
+    return line(t, f'Generating level {level} area "{area_id}" with seed {seed}', day)
 
 
 class TrackerTest(unittest.TestCase):
@@ -65,6 +66,7 @@ class TrackerTest(unittest.TestCase):
         self.play_campaign(step=3)
         slow = self.t.records["campaign_pb"][-1]
         self.t.new_league("Again")
+        self.t.run["league_key"] = "Covens of Umbra"   # same league as the fake log's date
         self.play_campaign(step=2)
         self.assertLess(self.t.records["campaign_pb"][-1], slow)
         again = Tracker(self.t.save_path)                     # app restarted
@@ -76,10 +78,35 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(self.t.timer(datetime(2026, 12, 1, 10, 0, 45)), 45)
         self.assertEqual(self.t.timer(datetime(2026, 12, 1, 10, 30, 0)), 0)   # AFK
 
-    def test_no_reading_before_a_league(self):
-        self.t.run["league"] = ""
-        self.write(line("10:00:00", ": Rags (Duelist) is now level 2"))
-        self.assertIsNone(self.t.run["character"])
+    def test_first_launch_ignores_old_log_lines(self):
+        with open(self.log, "a") as f:
+            f.write(area("09:00:00", 1, "1_1_1", 1))           # from before the tracker existed
+        save = os.path.join(os.path.dirname(self.log), "fresh.json")
+        with open(save, "w") as f:                             # only the log path known so far
+            json.dump({"log_path": self.log}, f)
+        fresh = Tracker(save)
+        self.assertEqual(fresh.run["offset"], os.path.getsize(self.log))
+        fresh.poll()
+        self.assertFalse(fresh.run["started"])
+
+    def test_league_comes_from_the_date(self):
+        aug, dec = "2026/08/01", "2026/12/01"
+        self.t.run["league"], self.t.run["league_key"] = "", None   # like a first launch
+        self.write(area("10:00:00", 1, "1_1_1", 1, aug), line("10:00:30", ": Rags (Duelist) is now level 2", aug),
+                   area("10:02:00", 12, "1_2_1", 2, aug))
+        self.assertEqual(self.t.run["league"], "Curse of the Allflame")
+        self.assertEqual(len(self.t.run["campaign_splits"]), 1)
+        # an alt in the same league doesn't reset the run
+        self.write(area("11:00:00", 1, "1_1_1", 3, aug), line("11:00:30", ": Alt (Witch) is now level 2", aug))
+        self.assertEqual(self.t.run["character"], "Rags")
+        self.assertEqual(len(self.t.run["campaign_splits"]), 1)
+        # a new character after Covens of Umbra launched starts a fresh run, PB/golds kept
+        gold = self.t.records["campaign_gold"][0]
+        self.write(area("10:00:00", 1, "1_1_1", 4, dec), line("10:00:30", ": Fresh (Ranger) is now level 2", dec))
+        self.assertEqual(self.t.run["league"], "Covens of Umbra")
+        self.assertEqual(self.t.run["character"], "Fresh")
+        self.assertEqual(self.t.run["campaign_splits"], [])
+        self.assertEqual(self.t.records["campaign_gold"][0], gold)
 
     def test_big_log_is_read_in_small_steps(self):
         import tracker
