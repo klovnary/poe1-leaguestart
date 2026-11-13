@@ -219,7 +219,9 @@ class App:
         elif not t.log_path:
             self.subtitle.config(text="Right-click > Find Client.txt...")
         elif run["started"]:
-            self.subtitle.config(text="Go! (character shows at your first level up)")
+            zone = run.get("zone") or "Go!"
+            lvl = f"  ·  area level {run['area_level']}" if run.get("area_level") else ""
+            self.subtitle.config(text=f"{zone}{lvl}")
         elif upcoming:
             self.subtitle.config(text=f"Launches in {countdown(upcoming[1])}  ·  then enter The Twilight Strand")
         else:
@@ -238,22 +240,29 @@ class App:
             for w in (row, name, delta, time):
                 w.config(bg=bg)
             name.config(text=names[i])
+            # Each row shows how long that act/voidstone took on its own (not a running total),
+            # and the +/- compares it with the same segment of your PB run.
+            pb_seg = (pb[i] - (pb[i - 1] if i else 0)) if pb else None
             if i < len(splits):                       # done
-                time.config(text=fmt(splits[i]), fg=TEXT)
                 segment = splits[i] - (splits[i - 1] if i else 0)
-                if pb:
-                    diff = splits[i] - pb[i]
-                    color = GOLD if golds[i] is not None and segment <= golds[i] else (AHEAD if diff <= 0 else BEHIND)
-                    delta.config(text=fmt(diff, sign=True), fg=color)
+                time.config(text=fmt(segment), fg=TEXT)
+                if golds[i] is not None and segment <= golds[i] and pb:
+                    delta.config(text=fmt(segment - pb_seg, sign=True), fg=GOLD)
+                elif pb:
+                    diff = segment - pb_seg
+                    delta.config(text=fmt(diff, sign=True), fg=AHEAD if diff <= 0 else BEHIND)
                 else:
                     delta.config(text="", fg=TEXT)
-            else:                                     # still to come
-                time.config(text=fmt(pb[i]) if pb else "-", fg=GRAY)
-                # show the live delta once you're behind your PB on this split
-                if i == current and pb and run["started"] and now_time > pb[i]:
-                    delta.config(text=fmt(now_time - pb[i], sign=True), fg=BEHIND)
+            elif i == current and run["started"]:     # running now
+                live = now_time - (splits[-1] if splits else 0)
+                time.config(text=fmt(live), fg=TEXT)
+                if pb_seg is not None and live > pb_seg:
+                    delta.config(text=fmt(live - pb_seg, sign=True), fg=BEHIND)
                 else:
                     delta.config(text="")
+            else:                                     # still to come: your PB's time for it
+                time.config(text=fmt(pb_seg) if pb_seg is not None else "-", fg=GRAY)
+                delta.config(text="")
 
         # Big timer
         if not run["started"]:
@@ -263,8 +272,7 @@ class App:
         else:
             color = AHEAD if now_time <= pb[current] else BEHIND
         self.timer.config(text=fmt(now_time), fg=color)
-        last = splits[-1] if splits else 0
-        self.segment.config(text=f"Segment  {fmt(now_time - last)}" if phase != "done" else "")
+        self.segment.config(text="")
 
         # Info lines
         lines = []

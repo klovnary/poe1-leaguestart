@@ -29,6 +29,7 @@ LOG_PATHS = [
 GENERATING = re.compile(r'Generating level (\d+) area "([^"]+)" with seed (\d+)')
 LEVEL_UP = re.compile(r"\] : (\S+) \(([^)]+)\) is now level (\d+)$")
 DEATH = re.compile(r"\] : (\S+) has been slain\.$")
+LOADING = re.compile(r"\[LOADING SCREEN\] \((.+)\) Duration")   # gives the zone's real name
 JOINED = re.compile(r"\] : (\S+) has joined the area\.$")
 CAMPAIGN_AREA = re.compile(r"^\d_(\d+)_")   # 1_3_5 = part 1, act 3, zone 5
 
@@ -51,6 +52,8 @@ def new_run():
         "deaths": 0,
         "others": [],           # party members (their level ups/deaths are ignored)
         "act": 1,
+        "zone": "",             # where you are now (from the loading screen line)
+        "area_level": 0,
         "campaign_time": 0.0,
         "atlas_time": 0.0,
         "campaign_splits": [],  # time at the end of each act
@@ -79,6 +82,8 @@ class Tracker:
             self.records.update(data.get("records", {}))
             self.log_path = data.get("log_path")
             self.window = data.get("window")
+            if data.get("version", 1) < 2:
+                self._clear_bad_records()
         if self.run["character"] and not self.run["started"]:
             self.run["started"] = True   # save from before "started" existed
         if self.run["league"] and not self.run["league_key"]:
@@ -88,10 +93,20 @@ class Tracker:
         if not self.run["league"] and self.run["offset"] == 0 and self.log_path:
             self.run["offset"] = os.path.getsize(self.log_path)   # first run: watch from now on
 
+    def _clear_bad_records(self):
+        """Saves from the first version have PB/golds built from reading the whole
+        Client.txt history (e.g. a 41-hour Act 6). Throw those away and rebuild the
+        golds from the run in progress, which was timed correctly."""
+        self.records = new_records()
+        for part in ("campaign", "atlas"):
+            splits = self.run[f"{part}_splits"]
+            for i, t in enumerate(splits):
+                self.records[f"{part}_gold"][i] = t - (splits[i - 1] if i else 0)
+
     def save(self):
         temp = self.save_path + ".tmp"
         with open(temp, "w", encoding="utf-8") as f:
-            json.dump({"run": self.run, "records": self.records, "log_path": self.log_path,
+            json.dump({"version": 2, "run": self.run, "records": self.records, "log_path": self.log_path,
                        "window": self.window}, f, indent=1)
         os.replace(temp, self.save_path)
 
@@ -244,6 +259,11 @@ class Tracker:
             run["deaths"] += 1
             return
 
+        m = LOADING.search(line)
+        if m:
+            run["zone"] = m.group(1)
+            return
+
         m = GENERATING.search(line)
         if m:
             # Loading into The Twilight Strand (1_1_1) on a new character starts the timer,
@@ -257,6 +277,7 @@ class Tracker:
                     self._auto_new_run(league)
                     run = self.run
                 run["started"] = True
+            run["area_level"] = int(m.group(1))
             if run["started"]:
                 self._entered_area(m.group(2), int(m.group(1)), m.group(3))
 
