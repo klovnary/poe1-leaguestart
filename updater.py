@@ -115,7 +115,7 @@ class Updater:
             with open(VERSION_FILE, "w", encoding="utf-8") as f:
                 json.dump(version, f, indent=2)
             if new_files:
-                self.status = "update ready - click to restart"
+                self.status = "update downloaded"
                 self.ready = True
             else:
                 self.status = "up to date"

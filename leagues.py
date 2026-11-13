@@ -25,3 +25,14 @@ def league_at(when):
         if datetime.strptime(start, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc) <= when_utc:
             current = name
     return current or "Standard"
+
+
+def next_league(when, within_days=7):
+    """(name, seconds until it starts) for a league starting within `within_days`, else None."""
+    when_utc = when.astimezone(timezone.utc)
+    for name, start in LEAGUES:
+        start_utc = datetime.strptime(start, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        wait = (start_utc - when_utc).total_seconds()
+        if 0 < wait <= within_days * 86400:
+            return name, wait
+    return None

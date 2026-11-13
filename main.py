@@ -38,13 +38,20 @@ def fmt(seconds, sign=False):
     return f"{prefix}{h}:{m:02d}:{s:02d}" if h else f"{prefix}{m}:{s:02d}"
 
 
+def countdown(seconds):
+    days, rest = divmod(int(seconds), 86400)
+    h, rest = divmod(rest, 3600)
+    m, s = divmod(rest, 60)
+    return f"{days}d {h}h {m:02d}m" if days else f"{h}:{m:02d}:{s:02d}"
+
+
 class App:
     def __init__(self, root):
         self.root = root
         self.tracker = Tracker()
         root.title("League Start")
         root.configure(bg=BG)
-        root.geometry("300x470")
+        root.geometry("300x500")
         root.attributes("-topmost", True)
         self.on_top = tk.BooleanVar(value=True)
 
@@ -86,12 +93,16 @@ class App:
         # Tiny bottom bar: version on the left, update status on the right
         tk.Label(root, text="Not affiliated with Grinding Gear Games", bg=BG, fg="#555",
                  font=(FONT, 7)).pack(side="bottom", pady=(0, 3))
-        bar = tk.Frame(root, bg=BG)
-        bar.pack(side="bottom", fill="x", padx=8)
-        tk.Label(bar, text=updater.version_text(), bg=BG, fg="#555", font=(FONT, 7)).pack(side="left")
-        self.update_label = tk.Label(bar, text="", bg=BG, fg="#555", font=(FONT, 7))
+        self.bar = tk.Frame(root, bg=BG)
+        self.bar.pack(side="bottom", fill="x", padx=8)
+        tk.Label(self.bar, text=updater.version_text(), bg=BG, fg="#888", font=(FONT, 8)).pack(side="left")
+        self.update_label = tk.Label(self.bar, text="", bg=BG, fg="#888", font=(FONT, 8))
         self.update_label.pack(side="right")
-        self.update_label.bind("<Button-1>", lambda e: self.restart_for_update())
+        # Big gold button, only shown once an update is downloaded
+        self.update_button = tk.Label(root, text="\u2b06  Update ready - click to restart", bg=GOLD, fg="#000",
+                                      font=(FONT, 10, "bold"), cursor="hand2", pady=6)
+        self.update_button.bind("<Button-1>", lambda e: self.restart_for_update())
+        self.update_shown = False
         self.updater = updater.Updater()
         self.updater.check_in_background()
 
@@ -170,7 +181,13 @@ class App:
 
         # Title
         part = {"campaign": "Campaign", "atlas": "Atlas", "done": "Done!"}[phase]
-        league = run["league"] if run["started"] else leagues.league_at(datetime.now())
+        upcoming = None if run["started"] else leagues.next_league(datetime.now())
+        if run["started"]:
+            league = run["league"]
+        elif upcoming:
+            league = upcoming[0]          # a league is about to launch: show that one
+        else:
+            league = leagues.league_at(datetime.now())
         self.title.config(text=f"{league} - {part}")
         if run["character"]:
             self.subtitle.config(text=f"{run['character']}  ·  Lvl {run['level']}  ·  Deaths {run['deaths']}")
@@ -178,6 +195,8 @@ class App:
             self.subtitle.config(text="Right-click > Find Client.txt...")
         elif run["started"]:
             self.subtitle.config(text="Go! (character shows at your first level up)")
+        elif upcoming:
+            self.subtitle.config(text=f"Launches in {countdown(upcoming[1])}  ·  then enter The Twilight Strand")
         else:
             self.subtitle.config(text="Starts when a new character enters The Twilight Strand")
 
@@ -241,10 +260,10 @@ class App:
             left.config(text=a)
             right.config(text=b, fg=color)
 
-        ready = self.updater.ready
-        self.update_label.config(text=self.updater.status, fg=GOLD if ready else "#555",
-                                 cursor="hand2" if ready else "",
-                                 font=(FONT, 7, "underline") if ready else (FONT, 7))
+        self.update_label.config(text=self.updater.status)
+        if self.updater.ready and not self.update_shown:
+            self.update_button.pack(side="bottom", fill="x", padx=8, pady=(4, 2), after=self.bar)
+            self.update_shown = True
         self.root.after(200, self.draw)
 
 
