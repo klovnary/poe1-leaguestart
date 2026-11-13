@@ -66,7 +66,6 @@ class TrackerTest(unittest.TestCase):
         self.play_campaign(step=3)
         slow = self.t.records["campaign_pb"][-1]
         self.t.new_league("Again")
-        self.t.run["league_key"] = "Covens of Umbra"   # same league as the fake log's date
         self.play_campaign(step=2)
         self.assertLess(self.t.records["campaign_pb"][-1], slow)
         again = Tracker(self.t.save_path)                     # app restarted
@@ -139,6 +138,13 @@ class TrackerTest(unittest.TestCase):
         self.write(area("10:00:00", 40, "1_5_1", 1), line("10:01:00", ": Rags (Duelist) is now level 41"))
         self.assertTrue(self.t.run["started"])
         self.assertEqual(self.t.run["campaign_time"], 0)
+
+    def test_manual_reset_keeps_custom_name(self):
+        self.t.new_league("Covens of Umbra HC")               # e.g. done before launch
+        self.write(area("10:00:00", 1, "1_1_1", 1), line("10:00:30", ": Rags (Duelist) is now level 2"))
+        self.assertEqual(self.t.run["league"], "Covens of Umbra HC")
+        self.assertEqual(self.t.run["league_key"], "Covens of Umbra")
+        self.assertEqual(self.t.run["character"], "Rags")
 
 
 if __name__ == "__main__":

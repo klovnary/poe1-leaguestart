@@ -130,7 +130,7 @@ class Tracker:
         """Manual reset from the menu (e.g. a restart, or a name like "Covens of Umbra HC")."""
         self.run = new_run()
         self.run["league"] = name
-        self.run["league_key"] = leagues.league_at(datetime.now())
+        self.run["league_key"] = None   # taken from your next Twilight Strand (keeps your name)
         if self.log_path and os.path.exists(self.log_path):
             self.run["offset"] = os.path.getsize(self.log_path)   # skip old lines
         self.save()
@@ -230,7 +230,8 @@ class Tracker:
                 run["character"] = m.group(1)   # the first character to level up is the league starter
                 run["started"] = True           # backup start, if you never passed the Strand
                 if not run["league_key"]:
-                    run["league"] = run["league_key"] = leagues.league_at(ts)
+                    run["league_key"] = leagues.league_at(ts)
+                    run["league"] = run["league"] or run["league_key"]
             if m.group(1) == run["character"]:
                 run["level"] = int(m.group(3))
             return
@@ -246,7 +247,10 @@ class Tracker:
             # and a new league (by date) starts a fresh run
             if m.group(2) == "1_1_1":
                 league = leagues.league_at(ts)
-                if league != run["league_key"]:
+                if run["league_key"] is None:          # first launch or a manual reset
+                    run["league_key"] = league
+                    run["league"] = run["league"] or league
+                elif league != run["league_key"]:      # a new league has started
                     self._auto_new_run(league)
                     run = self.run
                 run["started"] = True
