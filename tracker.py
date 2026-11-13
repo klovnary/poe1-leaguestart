@@ -71,12 +71,14 @@ class Tracker:
     def __init__(self, save_path=None):
         self.save_path = save_path or os.path.join(save_folder(), "save.json")
         self.run, self.records, self.log_path = new_run(), new_records(), None
+        self.window = None        # window size/position, e.g. "420x700+100+50"
         if os.path.exists(self.save_path):
             with open(self.save_path, encoding="utf-8") as f:
                 data = json.load(f)
             self.run.update(data.get("run", {}))
             self.records.update(data.get("records", {}))
             self.log_path = data.get("log_path")
+            self.window = data.get("window")
         if self.run["character"] and not self.run["started"]:
             self.run["started"] = True   # save from before "started" existed
         if self.run["league"] and not self.run["league_key"]:
@@ -89,7 +91,8 @@ class Tracker:
     def save(self):
         temp = self.save_path + ".tmp"
         with open(temp, "w", encoding="utf-8") as f:
-            json.dump({"run": self.run, "records": self.records, "log_path": self.log_path}, f, indent=1)
+            json.dump({"run": self.run, "records": self.records, "log_path": self.log_path,
+                       "window": self.window}, f, indent=1)
         os.replace(temp, self.save_path)
 
     # ---------- where are we ----------

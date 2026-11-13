@@ -7,6 +7,7 @@ Not affiliated with or endorsed by Grinding Gear Games.
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
+import tkinter.font as tkfont
 
 from datetime import datetime
 
@@ -51,13 +52,16 @@ class App:
         self.tracker = Tracker()
         root.title("League Start")
         root.configure(bg=BG)
-        root.geometry("300x500")
+        root.geometry(self.tracker.window or "300x500")
         root.attributes("-topmost", True)
         self.on_top = tk.BooleanVar(value=True)
+        self.fonts = {}           # (size, bold) -> font; all resized together with the window
+        self.scale = 1.0
+        root.bind("<Configure>", self.window_resized)
 
-        self.title = tk.Label(root, text="", bg=BG, fg=TEXT, font=(FONT, 11, "bold"))
+        self.title = tk.Label(root, text="", bg=BG, fg=TEXT, font=self.font(11, bold=True))
         self.title.pack(fill="x", pady=(8, 0))
-        self.subtitle = tk.Label(root, text="", bg=BG, fg=GRAY, font=(FONT, 9))
+        self.subtitle = tk.Label(root, text="", bg=BG, fg=GRAY, font=self.font(9))
         self.subtitle.pack(fill="x", pady=(0, 6))
 
         # 10 rows is enough for either list (10 acts / 4 voidstones)
@@ -65,42 +69,42 @@ class App:
         for i in range(10):
             row = tk.Frame(root, bg=BG)
             row.pack(fill="x")
-            name = tk.Label(row, bg=BG, fg=TEXT, font=(FONT, 10), anchor="w")
+            name = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
             name.pack(side="left", padx=8)
-            time = tk.Label(row, bg=BG, fg=TEXT, font=(FONT, 10), width=8, anchor="e")
+            time = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), width=8, anchor="e")
             time.pack(side="right", padx=8)
-            delta = tk.Label(row, bg=BG, fg=TEXT, font=(FONT, 10), width=7, anchor="e")
+            delta = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), width=7, anchor="e")
             delta.pack(side="right")
             for widget in (row, name, delta, time):
                 widget.bind("<Button-1>", lambda e, i=i: self.row_clicked(i))
             self.rows.append((row, name, delta, time))
 
-        self.timer = tk.Label(root, text="0:00", bg=BG, fg=GRAY, font=(FONT, 30, "bold"), anchor="e")
+        self.timer = tk.Label(root, text="0:00", bg=BG, fg=GRAY, font=self.font(30, bold=True), anchor="e")
         self.timer.pack(fill="x", padx=8, pady=(10, 0))
-        self.segment = tk.Label(root, text="", bg=BG, fg=GRAY, font=(FONT, 10), anchor="e")
+        self.segment = tk.Label(root, text="", bg=BG, fg=GRAY, font=self.font(10), anchor="e")
         self.segment.pack(fill="x", padx=8)
 
         self.info = []
         for _ in range(3):
             row = tk.Frame(root, bg=BG)
             row.pack(fill="x", padx=8)
-            left = tk.Label(row, bg=BG, fg=TEXT, font=(FONT, 9), anchor="w")
+            left = tk.Label(row, bg=BG, fg=TEXT, font=self.font(9), anchor="w")
             left.pack(side="left")
-            right = tk.Label(row, bg=BG, fg=TEXT, font=(FONT, 9), anchor="e")
+            right = tk.Label(row, bg=BG, fg=TEXT, font=self.font(9), anchor="e")
             right.pack(side="right")
             self.info.append((left, right))
 
         # Tiny bottom bar: version on the left, update status on the right
         tk.Label(root, text="Not affiliated with Grinding Gear Games", bg=BG, fg="#555",
-                 font=(FONT, 7)).pack(side="bottom", pady=(0, 3))
+                 font=self.font(7)).pack(side="bottom", pady=(0, 3))
         self.bar = tk.Frame(root, bg=BG)
         self.bar.pack(side="bottom", fill="x", padx=8)
-        tk.Label(self.bar, text=updater.version_text(), bg=BG, fg="#888", font=(FONT, 8)).pack(side="left")
-        self.update_label = tk.Label(self.bar, text="", bg=BG, fg="#888", font=(FONT, 8))
+        tk.Label(self.bar, text=updater.version_text(), bg=BG, fg="#888", font=self.font(8)).pack(side="left")
+        self.update_label = tk.Label(self.bar, text="", bg=BG, fg="#888", font=self.font(8))
         self.update_label.pack(side="right")
         # Big gold button, only shown once an update is downloaded
         self.update_button = tk.Label(root, text="\u2b06  Update ready - click to restart", bg=GOLD, fg="#000",
-                                      font=(FONT, 10, "bold"), cursor="hand2", pady=6)
+                                      font=self.font(10, bold=True), cursor="hand2", pady=6)
         self.update_button.bind("<Button-1>", lambda e: self.restart_for_update())
         self.update_shown = False
         self.updater = updater.Updater()
@@ -123,6 +127,25 @@ class App:
 
         self.read_log()
         self.draw()
+
+    # ---------- text that scales with the window ----------
+
+    def font(self, size, bold=False):
+        key = (size, bold)
+        if key not in self.fonts:
+            self.fonts[key] = tkfont.Font(family=FONT, size=size, weight="bold" if bold else "normal")
+        return self.fonts[key]
+
+    def window_resized(self, event):
+        if event.widget is not self.root:
+            return
+        # 300x500 is the normal size; bigger window = bigger text
+        scale = max(0.7, min(event.width / 300, event.height / 500, 4.0))
+        if abs(scale - self.scale) < 0.03:
+            return
+        self.scale = scale
+        for (size, bold), f in self.fonts.items():
+            f.configure(size=max(6, round(size * scale)))
 
     # ---------- actions ----------
 
@@ -155,6 +178,7 @@ class App:
 
     def restart_for_update(self):
         if self.updater.ready:
+            self.tracker.window = self.root.geometry()
             self.tracker.save()
             updater.restart()
             self.root.destroy()
@@ -168,6 +192,7 @@ class App:
 
     def close(self):
         try:
+            self.tracker.window = self.root.geometry()   # reopen at the same size and place
             self.tracker.save()
         finally:
             self.root.destroy()
