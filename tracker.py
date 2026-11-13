@@ -42,6 +42,7 @@ def new_run():
         "league": "",
         "offset": 0,            # how far into Client.txt we've read
         "last_ts": None,        # time of the last log line
+        "started": False,       # timer running (entered The Twilight Strand, or first level up)
         "character": None,      # league starter = first character to level up
         "level": 1,
         "deaths": 0,
@@ -73,6 +74,8 @@ class Tracker:
             self.run.update(data.get("run", {}))
             self.records.update(data.get("records", {}))
             self.log_path = data.get("log_path")
+        if self.run["character"] and not self.run["started"]:
+            self.run["started"] = True   # save from before "started" existed
         if not self.log_path or not os.path.exists(self.log_path):
             self.log_path = next((p for p in LOG_PATHS if os.path.exists(p)), None)
 
@@ -103,7 +106,7 @@ class Tracker:
         if phase == "done":
             return self.run["atlas_splits"][-1]
         t = self.run["campaign_time"] if phase == "campaign" else self.run["atlas_time"]
-        if self.run["character"] and self.run["last_ts"]:
+        if self.run["started"] and self.run["last_ts"]:
             gap = ((now or datetime.now()) - datetime.strptime(self.run["last_ts"], TIME_FORMAT)).total_seconds()
             if 0 < gap <= MAX_GAP:
                 t += gap
@@ -189,7 +192,7 @@ class Tracker:
             return
 
         # played time since the last line goes to whichever part we're in
-        if run["last_ts"] and run["character"]:
+        if run["last_ts"] and run["started"]:
             gap = (ts - datetime.strptime(run["last_ts"], TIME_FORMAT)).total_seconds()
             if 0 < gap <= MAX_GAP:
                 if self.phase() == "campaign":
@@ -207,7 +210,8 @@ class Tracker:
         m = LEVEL_UP.search(line)
         if m and m.group(1) not in run["others"]:
             if run["character"] is None:
-                run["character"] = m.group(1)   # timer starts at your first level up
+                run["character"] = m.group(1)   # the first character to level up is the league starter
+                run["started"] = True           # backup start, if you never passed the Strand
             if m.group(1) == run["character"]:
                 run["level"] = int(m.group(3))
             return
@@ -218,8 +222,12 @@ class Tracker:
             return
 
         m = GENERATING.search(line)
-        if m and run["character"]:
-            self._entered_area(m.group(2), int(m.group(1)), m.group(3))
+        if m:
+            # Loading into The Twilight Strand (1_1_1) on a new character starts the timer
+            if m.group(2) == "1_1_1" and not run["started"]:
+                run["started"] = True
+            if run["started"]:
+                self._entered_area(m.group(2), int(m.group(1)), m.group(3))
 
     def _entered_area(self, area, level, seed):
         run = self.run

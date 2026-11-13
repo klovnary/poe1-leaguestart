@@ -47,9 +47,9 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(r["character"], "Rags")
         self.assertEqual(r["level"], 2)                       # Pal's level up ignored
         self.assertEqual(len(r["campaign_splits"]), 10)
-        self.assertEqual(r["campaign_splits"][0], 120)        # 10:00:30 -> 10:02:30
+        self.assertEqual(r["campaign_splits"][0], 150)        # Strand 10:00:00 -> 10:02:30
         self.assertEqual(self.t.phase(), "atlas")
-        self.assertEqual(self.t.records["campaign_pb"][-1], 1200)
+        self.assertEqual(self.t.records["campaign_pb"][-1], 1230)
 
         self.write(area("10:21:00", 68, "MapWorldsStrand", 5), area("10:22:00", 68, "MapWorldsStrand", 5),
                    area("10:25:00", 83, "MapWorldsCrater", 6), line("11:30:00", ": x"))   # AFK gap
@@ -98,6 +98,20 @@ class TrackerTest(unittest.TestCase):
             self.assertEqual(self.t.timer(datetime(2026, 12, 1, 10, 0, 39)), 39)
         finally:
             tracker.CHUNK = old
+
+    def test_timer_starts_at_the_twilight_strand(self):
+        self.write(line("09:59:00", ": waiting on character select"),
+                   area("10:00:00", 1, "1_1_1", 1),
+                   line("10:00:40", ": Rags (Duelist) is now level 2"),
+                   area("10:03:00", 12, "1_2_1", 2))
+        self.assertTrue(self.t.run["started"])
+        self.assertEqual(self.t.run["character"], "Rags")
+        self.assertEqual(self.t.run["campaign_splits"], [180])   # 10:00:00 -> 10:03:00
+
+    def test_existing_character_starts_at_first_level_up(self):
+        self.write(area("10:00:00", 40, "1_5_1", 1), line("10:01:00", ": Rags (Duelist) is now level 41"))
+        self.assertTrue(self.t.run["started"])
+        self.assertEqual(self.t.run["campaign_time"], 0)
 
 
 if __name__ == "__main__":

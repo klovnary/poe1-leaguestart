@@ -173,8 +173,10 @@ class App:
             self.subtitle.config(text=f"{run['character']}  ·  Lvl {run['level']}  ·  Deaths {run['deaths']}")
         elif not t.log_path:
             self.subtitle.config(text="Right-click > Find Client.txt...")
+        elif run["started"]:
+            self.subtitle.config(text="Go! (character shows at your first level up)")
         else:
-            self.subtitle.config(text="Timer starts at your first level up")
+            self.subtitle.config(text="Timer starts when you enter The Twilight Strand")
 
         # Splits
         for i, (row, name, delta, time) in enumerate(self.rows):
@@ -201,13 +203,13 @@ class App:
             else:                                     # still to come
                 time.config(text=fmt(pb[i]) if pb else "-", fg=GRAY)
                 # show the live delta once you're behind your PB on this split
-                if i == current and pb and run["character"] and now_time > pb[i]:
+                if i == current and pb and run["started"] and now_time > pb[i]:
                     delta.config(text=fmt(now_time - pb[i], sign=True), fg=BEHIND)
                 else:
                     delta.config(text="")
 
         # Big timer
-        if not run["character"]:
+        if not run["started"]:
             color = GRAY
         elif phase == "done" or not pb or current is None:
             color = AHEAD
