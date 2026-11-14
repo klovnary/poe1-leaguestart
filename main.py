@@ -13,7 +13,7 @@ from datetime import datetime
 
 import leagues
 import updater
-from tracker import Tracker
+from tracker import ATLAS, Tracker
 
 # LiveSplit's default colours
 BG = "#0f0f0f"
@@ -52,7 +52,7 @@ class App:
         self.tracker = Tracker()
         root.title("League Start")
         root.configure(bg=BG)
-        root.geometry(self.tracker.window or "300x540")
+        root.geometry(self.tracker.window or "300x560")
         root.attributes("-topmost", True)
         self.on_top = tk.BooleanVar(value=True)
         self.fonts = {}           # (size, bold) -> font; all resized together with the window
@@ -86,7 +86,7 @@ class App:
         self.segment.pack(fill="x", padx=8)
 
         self.info = []
-        for _ in range(5):
+        for _ in range(6):
             row = tk.Frame(root, bg=BG)
             row.pack(fill="x", padx=8)
             left = tk.Label(row, bg=BG, fg=TEXT, font=self.font(9), anchor="w")
@@ -117,15 +117,13 @@ class App:
 
         self.menu = tk.Menu(root, tearoff=0)
         self.menu.add_command(label="Pause / resume (P)", command=self.tracker.toggle_pause)
-        self.menu.add_command(label="Split voidstone (Space)", command=self.split)
-        self.menu.add_command(label="Undo voidstone", command=self.undo)
+        self.menu.add_command(label="Undo last voidstone", command=self.undo)
         self.menu.add_separator()
         self.menu.add_command(label="Reset run...", command=self.new_league)
         self.menu.add_command(label="Find Client.txt...", command=self.choose_log)
         self.menu.add_checkbutton(label="Always on top", variable=self.on_top,
                                   command=lambda: root.attributes("-topmost", self.on_top.get()))
         root.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
-        root.bind("<space>", lambda e: self.split())
         root.bind("<p>", lambda e: self.tracker.toggle_pause())
         root.bind("<P>", lambda e: self.tracker.toggle_pause())
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -147,8 +145,8 @@ class App:
     def window_resized(self, event):
         if event.widget is not self.root:
             return
-        # 300x540 is the normal size; bigger window = bigger text
-        scale = max(0.7, min(event.width / 300, event.height / 540, 4.0))
+        # 300x560 is the normal size; bigger window = bigger text
+        scale = max(0.7, min(event.width / 300, event.height / 560, 4.0))
         if abs(scale - self.scale) < 0.03:
             return
         self.scale = scale
@@ -159,15 +157,13 @@ class App:
 
     # ---------- actions ----------
 
-    def split(self):
-        self.tracker.split_voidstone()
-
     def undo(self):
         self.tracker.undo_voidstone()
 
     def row_clicked(self, i):
-        if self.tracker.phase() == "atlas" and i == len(self.tracker.run["atlas_splits"]):
-            self.split()
+        """Click a voidstone (or its objectives line) when you get it."""
+        if self.tracker.phase() == "atlas" and i // 2 < len(ATLAS):
+            self.tracker.split_voidstone(ATLAS[i // 2])
 
     def new_league(self):
         """Manual reset. Normally not needed: a new league starts by itself when a
@@ -224,6 +220,53 @@ class App:
         finally:
             self.root.destroy()
 
+    def _draw_voidstones(self, splits, pb, golds):
+        """Atlas part: each voidstone on a row, its objectives on the line below.
+        Rows show the atlas time when you got it; +/- is against your PB's
+        1st/2nd/3rd/4th voidstone (whichever one it was)."""
+        t = self.tracker
+        got = t.got_voidstones()
+        for i, (row, name, delta, time) in enumerate(self.rows):
+            for w in (row, name, delta, time):
+                w.config(bg=BG)
+            # objective lines use the whole row; voidstone rows keep the time columns
+            delta.config(width=0 if i % 2 else 7)
+            time.config(width=0 if i % 2 else 8)
+            k = i // 2
+            if k >= len(ATLAS):
+                name.config(text="", font=self.font(10))
+                delta.config(text="")
+                time.config(text="")
+                continue
+            stone = ATLAS[k]
+            objs = t.objectives(stone)
+            if i % 2 == 0:                                   # the voidstone itself
+                name.config(text=f"{stone} Voidstone", font=self.font(10), fg=TEXT)
+                if stone in got:
+                    n = got.index(stone)
+                    time.config(text=fmt(splits[n]), fg=TEXT)
+                    if pb:
+                        diff = splits[n] - pb[n]
+                        seg = splits[n] - (splits[n - 1] if n else 0)
+                        is_gold = golds[n] is not None and seg <= golds[n]
+                        delta.config(text=fmt(diff, sign=True), fg=GOLD if is_gold else (AHEAD if diff <= 0 else BEHIND))
+                    else:
+                        delta.config(text="\u2713", fg=AHEAD)
+                else:
+                    done = sum(1 for _, d, total in objs if d == total)
+                    time.config(text=f"{done}/{len(objs)}", fg=GRAY)
+                    delta.config(text="")
+            else:                                            # its objectives
+                parts = []
+                for label, d, total in objs:
+                    mark = "\u2713" if d == total else "\u25cb"
+                    count = f" {d}/{total}" if total > 1 else ""
+                    parts.append(f"{mark} {label}{count}")
+                all_done = stone in got or all(d == total for _, d, total in objs)
+                name.config(text="   " + "   ".join(parts), font=self.font(7), fg=AHEAD if all_done else GRAY)
+                delta.config(text="")
+                time.config(text="")
+
     def draw(self):
         t, run = self.tracker, self.tracker.run
         phase = t.phase()
@@ -255,7 +298,14 @@ class App:
             self.subtitle.config(text="Starts when a new character enters The Twilight Strand")
 
         # Splits
+        if phase != "campaign":
+            self._draw_voidstones(splits, pb, golds)
         for i, (row, name, delta, time) in enumerate(self.rows):
+            if phase != "campaign":
+                break
+            name.config(font=self.font(10))
+            delta.config(width=7)
+            time.config(width=8)
             if i >= len(names):
                 for w in (row, name, delta, time):
                     w.config(bg=BG)
@@ -317,6 +367,7 @@ class App:
         else:
             tier = f"  ·  T{run['best_tier']}" if run["best_tier"] else ""
             lines.append((f"Maps {len(run['map_seeds'])}{tier}", f"Total {fmt(t.total())}", TEXT))
+            lines.append(("Campaign", fmt(run["campaign_splits"][-1]), TEXT))
         # Labyrinth: time in each lab (ticks while you're in one), and your bests
         labs = run.get("labs", {})
         if labs:

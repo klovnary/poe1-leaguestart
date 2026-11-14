@@ -13,7 +13,22 @@ from datetime import datetime
 import leagues
 
 CAMPAIGN = [f"Act {n}" for n in range(1, 11)]
-ATLAS = [f"Voidstone {n}" for n in range(1, 5)]
+# The four voidstones and what leads to each. An objective is ticked when you
+# enter that boss's arena (the log doesn't say when a boss dies).
+VOIDSTONES = [
+    ("Eldritch", [("Star & Hunger", ["MapWorldsPrimordialBoss1", "MapWorldsPrimordialBoss2"]),
+                  ("Exarch", ["MapWorldsPrimordialBoss3"]),
+                  ("Eater", ["MapWorldsPrimordialBoss4"])]),
+    ("Ceremonial", [("Crucible", ["MavenHub"]),
+                    ("Maven", ["MavenBoss"])]),
+    ("Decayed", [("Guardians", ["MapWorldsMinotaur", "MapWorldsChimera", "MapWorldsHydra", "MapWorldsPhoenix"]),
+                 ("Shaper", ["MapWorldsShapersRealm"]),
+                 ("Elder", ["MapWorldsElderArena"])]),
+    ("Originator", [("Fear & Neglect", ["MapWorldsMemoryBoss1", "MapWorldsMemoryBoss2"]),
+                    ("Dread", ["MapWorldsMemoryBoss3"])]),
+]
+ATLAS = [name for name, _ in VOIDSTONES]
+OBJECTIVE_AREAS = {a for _, objs in VOIDSTONES for _, areas in objs for a in areas}
 
 CHUNK = 500_000  # bytes of Client.txt read per step
 MAX_GAP = 300   # seconds between log lines; longer = AFK/offline, not counted
@@ -65,6 +80,8 @@ def new_run():
         "labs": {},             # "Normal": {"time": seconds, "done": True/False}
         "lab_now": None,        # the lab you're in right now
         "lab_final": False,     # in Izaro's last room (leaving it = lab done)
+        "voidstone_order": [],  # which voidstone each atlas split was, in the order you got them
+        "atlas_seen": [],       # boss arenas entered (voidstone objectives)
         "map_seeds": [],
         "best_tier": 0,
     }
@@ -178,16 +195,43 @@ class Tracker:
         self.run["paused"] = not self.run.get("paused")
         self.save()
 
-    def split_voidstone(self):
+    def got_voidstones(self):
+        order = self.run.setdefault("voidstone_order", [])
+        # older saves split "Voidstone 1, 2..." without a name: give them the first free ones
+        for name in ATLAS:
+            if len(order) >= len(self.run["atlas_splits"]):
+                break
+            if name not in order:
+                order.append(name)
+        return order
+
+    def split_voidstone(self, name=None):
+        """You got a voidstone (any order). name=None: the first one you don't have yet."""
         if self.phase() != "atlas":
             return
+        got = self.got_voidstones()
+        name = name or next(n for n in ATLAS if n not in got)
+        if name in got:
+            return
+        got.append(name)
         self._split("atlas", self.run["atlas_time"])
         self.save()
 
     def undo_voidstone(self):
         if self.run["atlas_splits"] and len(self.run["campaign_splits"]) == 10:
+            got = self.got_voidstones()
             self.run["atlas_splits"].pop()
+            if got:
+                got.pop()
             self.save()
+
+    def objectives(self, name):
+        """[(label, done, total), ...] for one voidstone."""
+        seen = set(self.run.get("atlas_seen", []))
+        for stone, objs in VOIDSTONES:
+            if stone == name:
+                return [(label, sum(a in seen for a in areas), len(areas)) for label, areas in objs]
+        return []
 
     def _split(self, part, time):
         splits = self.run[f"{part}_splits"]
@@ -330,6 +374,8 @@ class Tracker:
     def _entered_area(self, area, level, seed):
         run = self.run
         self._track_lab(area)
+        if area in OBJECTIVE_AREAS and area not in run.setdefault("atlas_seen", []):
+            run["atlas_seen"].append(area)
         is_map = area.startswith("MapWorlds") and level >= 68
 
         if self.phase() == "campaign":

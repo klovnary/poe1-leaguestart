@@ -175,6 +175,22 @@ class TrackerTest(unittest.TestCase):
         self.write(area("11:20:00", 13, "1_3_1", 9))
         self.assertEqual(lab["time"], 600)
 
+    def test_voidstone_objectives_and_any_order(self):
+        self.play_campaign()
+        self.write(area("10:30:00", 79, "MapWorldsPrimordialBoss1", 10),
+                   area("10:40:00", 83, "MapWorldsPrimordialBoss3", 11),
+                   area("10:50:00", 83, "MavenHub", 12))
+        objs = dict((label, (d, total)) for label, d, total in self.t.objectives("Eldritch"))
+        self.assertEqual(objs["Star & Hunger"], (1, 2))
+        self.assertEqual(objs["Exarch"], (1, 1))
+        self.assertEqual(objs["Eater"], (0, 1))
+        self.t.split_voidstone("Ceremonial")                  # got the Maven one first
+        self.t.split_voidstone("Ceremonial")                  # clicking again does nothing
+        self.assertEqual(self.t.got_voidstones(), ["Ceremonial"])
+        self.assertEqual(len(self.t.run["atlas_splits"]), 1)
+        self.t.undo_voidstone()
+        self.assertEqual(self.t.got_voidstones(), [])
+
 
 if __name__ == "__main__":
     unittest.main()
