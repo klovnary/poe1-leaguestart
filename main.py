@@ -28,6 +28,32 @@ ZONE_BG = "#13213f"      # zones under the open act
 ROW_BUDGET = 28          # most split lines shown at once (acts fold to stay under it)
 
 
+class Label(tk.Label):
+    """A label that skips updates that don't change anything. The window redraws
+    5 times a second; without this every redraw re-lays out the whole window."""
+    def config(self, cnf=None, **kw):
+        if cnf is not None:
+            return super().config(cnf, **kw)
+        cache = self.__dict__.setdefault("_set", {})
+        changed = {k: v for k, v in kw.items() if k not in cache or cache[k] != v}
+        if changed:
+            cache.update(changed)
+            super().config(**changed)
+    configure = config
+
+
+class Frame(tk.Frame):
+    def config(self, cnf=None, **kw):
+        if cnf is not None:
+            return super().config(cnf, **kw)
+        cache = self.__dict__.setdefault("_set", {})
+        changed = {k: v for k, v in kw.items() if k not in cache or cache[k] != v}
+        if changed:
+            cache.update(changed)
+            super().config(**changed)
+    configure = config
+
+
 def fmt(seconds, sign=False):
     if seconds is None:
         return "-"
@@ -61,55 +87,60 @@ class App:
         self.scale = 1.0
         root.bind("<Configure>", self.window_resized)
 
-        self.title = tk.Label(root, text="", bg=BG, fg=TEXT, font=self.font(11, bold=True))
+        self.title = Label(root, text="", bg=BG, fg=TEXT, font=self.font(11, bold=True))
         self.title.pack(fill="x", pady=(8, 0))
-        self.subtitle = tk.Label(root, text="", bg=BG, fg=GRAY, font=self.font(10))
+        self.subtitle = Label(root, text="", bg=BG, fg=GRAY, font=self.font(10))
         self.subtitle.pack(fill="x", pady=(0, 6))
 
-        # 10 rows is enough for either list (10 acts / 4 voidstones)
+        # Split lines (acts, zones, voidstones). If the window is too short, these are
+        # what gets cut, never the timer: the block below gets its space first.
+        self.splits_frame = Frame(root, bg=BG)
+        self.splits_frame.pack(fill="both", expand=True)
+        self.lower = Frame(root, bg=BG)
         self.rows = []
         self.obj_labels = []
         for i in range(32):   # 10 acts + every zone of the open act
-            row = tk.Frame(root, bg=BG)
+            row = Frame(self.splits_frame, bg=BG)
             row.pack(fill="x")   # (re-packed by show_rows so only used rows take space)
-            name = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
+            name = Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
             name.pack(side="left", padx=8)
             # used on the voidstone objective lines: one label per objective
-            objs = [tk.Label(row, bg=BG, font=self.font(9, bold=True), anchor="w") for _ in range(3)]
+            objs = [Label(row, bg=BG, font=self.font(9, bold=True), anchor="w") for _ in range(3)]
             for o in objs:
                 o.pack(side="left", padx=(0, 10))
             self.obj_labels.append(objs)
-            time = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), width=8, anchor="e")
+            time = Label(row, bg=BG, fg=TEXT, font=self.font(10), width=8, anchor="e")
             time.pack(side="right", padx=8)
-            delta = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), width=7, anchor="e")
+            delta = Label(row, bg=BG, fg=TEXT, font=self.font(10), width=7, anchor="e")
             delta.pack(side="right")
             for widget in (row, name, delta, time, *objs):
                 widget.bind("<Button-1>", lambda e, i=i: self.row_clicked(i))
             self.rows.append((row, name, delta, time))
 
-        self.timer = tk.Label(root, text="0:00", bg=BG, fg=GRAY, font=self.font(30, bold=True), anchor="e")
+        self.timer = Label(self.lower, text="0:00", bg=BG, fg=GRAY, font=self.font(30, bold=True), anchor="e")
         self.timer.pack(fill="x", padx=8, pady=(10, 0))
         self.timer.bind("<Button-1>", lambda e: self.tracker.toggle_pause())   # click the timer to pause
-        self.segment = tk.Label(root, text="", bg=BG, fg=GRAY, font=self.font(10), anchor="e")
+        self.segment = Label(self.lower, text="", bg=BG, fg=GRAY, font=self.font(10), anchor="e")
         self.segment.pack(fill="x", padx=8)
 
         self.info = []
         for _ in range(6):
-            row = tk.Frame(root, bg=BG)
+            row = Frame(self.lower, bg=BG)
             row.pack(fill="x", padx=8)
-            left = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
+            left = Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
             left.pack(side="left")
-            right = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="e")
+            right = Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="e")
             right.pack(side="right")
             self.info.append((left, right))
 
         # Tiny bottom bar: version on the left, update status on the right
-        tk.Label(root, text="Not affiliated with Grinding Gear Games", bg=BG, fg="#8a8a8a",
+        Label(root, text="Not affiliated with Grinding Gear Games", bg=BG, fg="#8a8a8a",
                  font=self.font(8)).pack(side="bottom", pady=(0, 3), before=self.title)
-        self.bar = tk.Frame(root, bg=BG)
+        self.bar = Frame(root, bg=BG)
         self.bar.pack(side="bottom", fill="x", padx=8, before=self.title)
-        tk.Label(self.bar, text=updater.version_text(), bg=BG, fg="#b0b0b0", font=self.font(9)).pack(side="left")
-        self.update_label = tk.Label(self.bar, text="", bg=BG, fg="#b0b0b0", font=self.font(9))
+        self.lower.pack(side="bottom", fill="x", before=self.title)
+        Label(self.bar, text=updater.version_text(), bg=BG, fg="#b0b0b0", font=self.font(9)).pack(side="left")
+        self.update_label = Label(self.bar, text="", bg=BG, fg="#b0b0b0", font=self.font(9))
         self.update_label.pack(side="right")
         self.update_label.config(cursor="hand2")
         self.update_label.bind("<Button-1>", lambda e: self.updater.check_now())   # click: check now
@@ -171,17 +202,12 @@ class App:
         self.root.after_idle(self.fit_height)
 
     def fit_height(self):
-        """Make the window exactly as tall as what it shows (it changes as zones open
-        and close). If that's taller than the screen, make the text smaller to fit."""
+        """Make the window as tall as what it shows (it changes as acts open and close),
+        up to the screen's height. Only runs when the number of lines changes."""
         root = self.root
         root.update_idletasks()
-        need = root.winfo_reqheight()
-        room = root.winfo_screenheight() - 80
-        if need > room and self.scale > 0.75:
-            self.set_scale(max(0.7, self.scale * room / need))
-            root.update_idletasks()
-            need = min(root.winfo_reqheight(), room)
-        if abs(root.winfo_height() - need) > 2:
+        need = min(root.winfo_reqheight(), root.winfo_screenheight() - 80)
+        if root.winfo_width() > 50 and abs(root.winfo_height() - need) > 2:
             root.geometry(f"{root.winfo_width()}x{need}")
 
     # ---------- actions ----------
@@ -257,7 +283,7 @@ class App:
         for row, *_ in self.rows:
             row.pack_forget()
         for row, *_ in self.rows[:n]:
-            row.pack(fill="x", before=self.timer)
+            row.pack(fill="x")
         self.root.after_idle(self.fit_height)
 
     def _draw_campaign(self, names, splits, pb, golds, now_time, current):
@@ -497,7 +523,7 @@ class App:
         self.update_label.config(text=self.updater.status)
         if self.updater.ready and not self.update_shown:
             # packed before the title so it always gets room, right above the version line
-            self.update_button.pack(side="bottom", fill="x", padx=8, pady=(6, 4), before=self.title)
+            self.update_button.pack(side="bottom", fill="x", padx=8, pady=(6, 4), before=self.lower)
             self.update_shown = True
             self.draw_update_button()
             self.root.after_idle(self.fit_height)
