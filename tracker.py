@@ -8,9 +8,10 @@ Everything is saved to one JSON file, including your best times (PB and golds).
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import leagues
+from zones import ZONE_NAMES, zone_list
 
 CAMPAIGN = [f"Act {n}" for n in range(1, 11)]
 # The four voidstones and what leads to each. An objective is ticked when you
@@ -33,6 +34,8 @@ OBJECTIVE_AREAS = {a for _, objs in VOIDSTONES for _, areas in objs for a in are
 CHUNK = 500_000  # bytes of Client.txt read per step
 MAX_GAP = 300   # seconds between log lines; longer = AFK/offline, not counted
 TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
+BACKFILL_BYTES = 30_000_000   # how far back in Client.txt to look when filling in an act
+LINE_TS = re.compile(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}$")
 
 LOG_PATHS = [
     r"C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\logs\Client.txt",
@@ -72,7 +75,9 @@ def new_run():
         "others": [],           # party members (their level ups/deaths are ignored)
         "act": 1,
         "zone": "",             # where you are now (from the loading screen line)
-        "act_zones": [],        # zones of the current act: [area id, name, seconds], in visit order
+        "act_zones": [],        # zones of the current act: [area id, name, seconds, left at], visit order
+                                # (seconds None = visited before the timer ran: "N/A")
+        "act_started_ts": None, # when the current act started (log time)
         "act_history": {},      # act number -> its zone list, once the act is done
         "zone_now": None,       # area id you're in
         "area_level": 0,
@@ -120,6 +125,10 @@ class Tracker:
             self.log_path = next((p for p in LOG_PATHS if os.path.exists(p)), None)
         if not self.run["league"] and self.run["offset"] == 0 and self.log_path:
             self.run["offset"] = os.path.getsize(self.log_path)   # first run: watch from now on
+        try:
+            self.backfill_act()
+        except (OSError, ValueError):
+            pass   # a damaged or missing log just means no backfill
 
     def _clear_bad_records(self):
         """Saves from the first version have PB/golds built from reading the whole
@@ -201,6 +210,7 @@ class Tracker:
             return
         run["started"] = True
         run["last_ts"] = datetime.now().strftime(TIME_FORMAT)   # count from this moment
+        run["act_started_ts"] = run["last_ts"]
         if not run["league_key"]:
             run["league_key"] = leagues.league_at(datetime.now())
             run["league"] = run["league"] or run["league_key"]
@@ -261,6 +271,19 @@ class Tracker:
         if len(splits) == len(golds) and (pb is None or time < pb[-1]):
             self.records[f"{part}_pb"] = list(splits)
 
+    def act_time(self):
+        """Time so far in the current act."""
+        splits = self.run["campaign_splits"]
+        return self.run["campaign_time"] - (splits[-1] if splits else 0)
+
+    def _left_zone(self):
+        """You moved on from the zone you were in: note the act time ("end time")."""
+        for z in self.run.get("act_zones", []):
+            if z[0] == self.run.get("zone_now"):
+                while len(z) < 4:
+                    z.append(None)
+                z[3] = self.act_time()
+
     def _close_act_zones(self):
         """The act is done: keep its zone list and start a fresh one."""
         run = self.run
@@ -269,18 +292,104 @@ class Tracker:
         run["zone_now"] = None
 
     def zone_times(self, now=None):
-        """[(name, seconds, is_current), ...] for the current act, the zone you're in ticking live."""
+        """Rows for the current act: every zone of the act in the usual order, plus any
+        other zone you went to (hideout, old towns...), as
+        (name, seconds or None, left at or None, you're here, visited).
+        seconds None on a visited zone = it was before the timer ran ("N/A")."""
         run = self.run
         live = 0.0
         if run["started"] and run["last_ts"] and not run.get("paused"):
             gap = ((now or datetime.now()) - datetime.strptime(run["last_ts"], TIME_FORMAT)).total_seconds()
             if 0 < gap <= MAX_GAP:
                 live = gap
+        visited = {z[0]: z for z in run.get("act_zones", [])}
         rows = []
-        for area, name, secs in run.get("act_zones", []):
-            here = area == run.get("zone_now")
-            rows.append((name or area, secs + (live if here else 0), here))
+        listed = set()
+        for area, name, optional in zone_list(run["act"]):
+            listed.add(area)
+            z = visited.get(area)
+            if z is None:
+                if not optional:
+                    rows.append((name, None, None, False, False))
+                continue
+            rows.append(self._zone_row(z, name, live))
+        for area, z in visited.items():
+            if area not in listed:
+                rows.append(self._zone_row(z, z[1] or area, live))
         return rows
+
+    def _zone_row(self, z, name, live):
+        here = z[0] == self.run.get("zone_now")
+        secs = z[2] if len(z) > 2 else None
+        if secs is not None and here:
+            secs += live
+        left = z[3] if len(z) > 3 and not here else None
+        return (name, secs, left, here, True)
+
+    # ---------- filling in the current act from the log ----------
+
+    def backfill_act(self):
+        """Rebuild the current act's zones from Client.txt (e.g. after updating
+        mid-act, or a timer started by hand). Zones visited before the timer
+        started are kept as visited without a time ("N/A")."""
+        run = self.run
+        if not (run["started"] and self.phase() == "campaign" and self.log_path
+                and os.path.exists(self.log_path) and run["last_ts"]):
+            return
+        start = run.get("act_started_ts")
+        if not start:   # older saves: work back from the time the act has taken
+            start = (datetime.strptime(run["last_ts"], TIME_FORMAT)
+                     - timedelta(seconds=self.act_time())).strftime(TIME_FORMAT)
+            run["act_started_ts"] = start
+        end = min(run["offset"], os.path.getsize(self.log_path))
+        with open(self.log_path, "rb") as f:
+            f.seek(max(0, end - BACKFILL_BYTES))
+            text = f.read(end - max(0, end - BACKFILL_BYTES)).decode("utf-8", errors="ignore")
+        zones, order, cur, prev_ts, act_t = {}, [], None, None, 0.0
+        before = []      # this character's zones before the timer started (act 1)
+        for line in text.splitlines():
+            ts = line[:19]
+            if not LINE_TS.match(ts):
+                continue
+            g = GENERATING.search(line)
+            if ts < start:
+                if g:
+                    if g.group(2) == "1_1_1":
+                        before = []
+                    before.append(g.group(2))
+                    cur = g.group(2)
+                continue
+            if prev_ts is None:
+                prev_ts = start
+            gap = (datetime.strptime(ts, TIME_FORMAT) - datetime.strptime(prev_ts, TIME_FORMAT)).total_seconds()
+            prev_ts = ts
+            if cur and 0 < gap <= MAX_GAP:
+                if cur not in zones:
+                    zones[cur] = [cur, ZONE_NAMES.get(cur, ""), 0.0, None]
+                    order.append(cur)
+                zones[cur][2] = (zones[cur][2] or 0) + gap
+                act_t += gap
+            if g:
+                if cur in zones:
+                    zones[cur][3] = act_t
+                cur = g.group(2)
+                if cur not in zones:
+                    zones[cur] = [cur, ZONE_NAMES.get(cur, ""), 0.0, None]
+                    order.append(cur)
+                continue
+            m = LOADING.search(line)
+            if m and cur in zones and not zones[cur][1]:
+                zones[cur][1] = m.group(1)
+        if run["act"] == 1:
+            for area in before:
+                if area not in zones and ZONE_NAMES.get(area) and area.startswith("1_1_"):
+                    zones[area] = [area, ZONE_NAMES[area], None, None]
+                    order.insert(0, area)
+        if zones:
+            run["act_zones"] = [zones[a] for a in order]
+            run["zone_now"] = cur
+            if cur in zones:
+                zones[cur][3] = None
 
     def _track_lab(self, area):
         run = self.run
@@ -348,6 +457,7 @@ class Tracker:
             ts = datetime.strptime(line[:19], TIME_FORMAT)
         except ValueError:
             return
+        self._line_ts = line[:19]
 
         # played time since the last line goes to whichever part we're in
         if run["last_ts"] and run["started"]:
@@ -360,7 +470,7 @@ class Tracker:
                     run["campaign_time"] += gap
                     for z in run.get("act_zones", []):
                         if z[0] == run.get("zone_now"):
-                            z[2] += gap
+                            z[2] = (z[2] or 0) + gap
                             break
                 elif self.phase() == "atlas":
                     run["atlas_time"] += gap
@@ -409,6 +519,8 @@ class Tracker:
                 elif league != run["league_key"]:      # a new league has started
                     self._auto_new_run(league)
                     run = self.run
+                if not run["started"]:
+                    run["act_started_ts"] = line[:19]
                 run["started"] = True
             run["area_level"] = int(m.group(1))
             if run["started"]:
@@ -424,17 +536,19 @@ class Tracker:
         if self.phase() == "campaign":
             act_match = CAMPAIGN_AREA.match(area)
             act = int(act_match.group(1)) if act_match else None
+            self._left_zone()
             if act == run["act"] + 1 and act <= 10:
                 self._split("campaign", run["campaign_time"])
                 self._close_act_zones()
                 run["act"] = act
+                run["act_started_ts"] = getattr(self, "_line_ts", None)
             elif run["act"] == 10 and (act == 11 or is_map):   # epilogue or first map = Act 10 done
                 self._split("campaign", run["campaign_time"])
                 self._close_act_zones()
             if self.phase() == "campaign":
                 zones = run.setdefault("act_zones", [])
                 if not any(z[0] == area for z in zones):
-                    zones.append([area, "", 0.0])
+                    zones.append([area, ZONE_NAMES.get(area, ""), 0.0, None])
                 run["zone_now"] = area
 
         if self.phase() == "atlas" and is_map and seed not in run["map_seeds"]:

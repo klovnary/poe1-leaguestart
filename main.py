@@ -25,7 +25,7 @@ BEHIND = "#cc1200"
 GOLD = "#d8af1f"
 FONT = "Segoe UI"
 ZONE_BG = "#13213f"      # zones under the open act
-MAX_ZONE_ROWS = 6
+ROW_BUDGET = 28          # most split lines shown at once (acts fold to stay under it)
 
 
 def fmt(seconds, sign=False):
@@ -54,7 +54,7 @@ class App:
         self.tracker = Tracker()
         root.title("League Start")
         root.configure(bg=BG)
-        root.geometry(self.tracker.window or "300x700")
+        root.geometry(self.tracker.window or "300x700")   # position and width; height fits itself
         root.attributes("-topmost", True)
         self.on_top = tk.BooleanVar(value=True)
         self.fonts = {}           # (size, bold) -> font; all resized together with the window
@@ -69,7 +69,7 @@ class App:
         # 10 rows is enough for either list (10 acts / 4 voidstones)
         self.rows = []
         self.obj_labels = []
-        for i in range(16):   # 10 acts + up to 6 zones of the open act
+        for i in range(32):   # 10 acts + every zone of the open act
             row = tk.Frame(root, bg=BG)
             row.pack(fill="x")   # (re-packed by show_rows so only used rows take space)
             name = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
@@ -152,17 +152,37 @@ class App:
         return self.fonts[key]
 
     def window_resized(self, event):
+        """Width sets the text size (300 wide = normal); the height follows the content."""
         if event.widget is not self.root:
             return
-        # 300x700 is the normal size; bigger window = bigger text
-        scale = max(0.7, min(event.width / 300, event.height / 700, 4.0))
-        if abs(scale - self.scale) < 0.03:
+        if abs(event.width - getattr(self, "last_width", 0)) < 2:
+            return
+        self.last_width = event.width
+        self.set_scale(max(0.7, min(event.width / 300, 4.0)))
+
+    def set_scale(self, scale):
+        if abs(scale - self.scale) < 0.02:
             return
         self.scale = scale
         for (size, bold), f in self.fonts.items():
             f.configure(size=max(6, round(size * scale)))
         if self.update_shown:
             self.draw_update_button()
+        self.root.after_idle(self.fit_height)
+
+    def fit_height(self):
+        """Make the window exactly as tall as what it shows (it changes as zones open
+        and close). If that's taller than the screen, make the text smaller to fit."""
+        root = self.root
+        root.update_idletasks()
+        need = root.winfo_reqheight()
+        room = root.winfo_screenheight() - 80
+        if need > room and self.scale > 0.75:
+            self.set_scale(max(0.7, self.scale * room / need))
+            root.update_idletasks()
+            need = min(root.winfo_reqheight(), room)
+        if abs(root.winfo_height() - need) > 2:
+            root.geometry(f"{root.winfo_width()}x{need}")
 
     # ---------- actions ----------
 
@@ -238,19 +258,23 @@ class App:
             row.pack_forget()
         for row, *_ in self.rows[:n]:
             row.pack(fill="x", before=self.timer)
+        self.root.after_idle(self.fit_height)
 
     def _draw_campaign(self, names, splits, pb, golds, now_time, current):
-        """Acts 1-10. The act you're in opens up to show its zones (time spent in
-        each, the one you're in highlighted); when it's done it folds back into
-        one line with the act's total."""
+        """Acts 1-10. The act you're in opens up to list all of its zones: time spent
+        in each and the act time when you moved on ("end"); the zone you're in is
+        highlighted. Done acts show one line with their total."""
         run = self.tracker.run
         specs = [("act", i) for i in range(len(names))]
         if current is not None and run["started"]:
             zones = self.tracker.zone_times()
-            if len(zones) > MAX_ZONE_ROWS:
-                older = zones[:len(zones) - (MAX_ZONE_ROWS - 1)]
-                zones = [(f"+{len(older)} earlier zones", sum(z[1] for z in older), False)] + zones[-(MAX_ZONE_ROWS - 1):]
             specs[current + 1:current + 1] = [("zone", z) for z in zones]
+            # too many lines for the window: fold finished acts, then upcoming ones
+            if len(specs) > ROW_BUDGET and current >= 2:
+                specs = [("acts", (0, current - 1))] + specs[current:]
+            if len(specs) > ROW_BUDGET and current <= 7:
+                cut = next(i for i, sp in enumerate(specs) if sp == ("act", current + 1))
+                specs = specs[:cut] + [("acts", (current + 1, 9))]
         self.show_rows(len(specs))
 
         for i, (row, name, delta, time) in enumerate(self.rows):
@@ -259,29 +283,51 @@ class App:
             for o in self.obj_labels[i]:
                 o.config(text="")
             if i >= len(specs):
-                for w in (row, name, delta, time, *self.obj_labels[i]):
-                    w.config(bg=BG)
-                name.config(text="", font=self.font(10))
-                delta.config(text="")
-                time.config(text="")
                 continue
             kind, value = specs[i]
             if kind == "zone":                           # a zone of the open act
-                zone_name, secs, here = value
+                zone_name, secs, left, here, visited = value
                 for w in (row, name, delta, time, *self.obj_labels[i]):
                     w.config(bg=ZONE_BG)
-                color = GOLD if here else "#d8d8d8"
+                color = GOLD if here else ("#e0e0e0" if visited else "#7f8794")
                 name.config(text=("\u25b8 " if here else "   ") + zone_name, font=self.font(9), fg=color)
-                time.config(text=fmt(secs), font=self.font(9), fg=color)
-                delta.config(text="")
+                if visited and secs is None:
+                    spent = "N/A"
+                else:
+                    spent = fmt(secs) if visited else "-"
+                delta.config(text=spent, font=self.font(9), fg=color)
+                time.config(text=fmt(left) if left is not None else ("" if here else "-"),
+                            font=self.font(9), fg=color)
+                continue
+
+            name.config(font=self.font(10))
+            delta.config(font=self.font(10))
+            time.config(font=self.font(10))
+            if kind == "acts":                           # several acts folded into one line
+                first, last = value
+                for w in (row, name, delta, time, *self.obj_labels[i]):
+                    w.config(bg=BG)
+                name.config(text=f"Acts {first + 1}-{last + 1}", fg=GRAY)
+                seg = lambda lst, a: lst[a] - (lst[a - 1] if a else 0)
+                if last < len(splits):                   # done ones: their total
+                    total = sum(seg(splits, a) for a in range(first, last + 1))
+                    time.config(text=fmt(total), fg=TEXT)
+                    if pb:
+                        diff = total - sum(seg(pb, a) for a in range(first, last + 1))
+                        delta.config(text=fmt(diff, sign=True), fg=AHEAD if diff <= 0 else BEHIND)
+                    else:
+                        delta.config(text="")
+                else:                                    # upcoming: your PB's time for them
+                    time.config(text=fmt(sum(seg(pb, a) for a in range(first, last + 1))) if pb else "-",
+                                fg=GRAY)
+                    delta.config(text="")
                 continue
 
             a = value                                    # an act
             bg = CURRENT if a == current else BG
             for w in (row, name, delta, time, *self.obj_labels[i]):
                 w.config(bg=bg)
-            name.config(text=names[a], font=self.font(10), fg=TEXT)
-            time.config(font=self.font(10))
+            name.config(text=names[a], fg=TEXT)
             # Each act shows how long it took on its own (not a running total),
             # and the +/- compares it with the same act of your PB run.
             pb_seg = (pb[a] - (pb[a - 1] if a else 0)) if pb else None
@@ -454,6 +500,7 @@ class App:
             self.update_button.pack(side="bottom", fill="x", padx=8, pady=(6, 4), before=self.title)
             self.update_shown = True
             self.draw_update_button()
+            self.root.after_idle(self.fit_height)
         self.root.after(200, self.draw)
 
 

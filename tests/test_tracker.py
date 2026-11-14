@@ -204,14 +204,40 @@ class TrackerTest(unittest.TestCase):
                    area("10:03:00", 2, "1_1_town", 2), load("10:03:02", "Lioneye's Watch"),
                    area("10:04:00", 3, "1_1_2", 3), load("10:04:02", "The Coast"),
                    area("10:07:00", 2, "1_1_town", 4), line("10:08:00", ": x"))
-        zones = self.t.zone_times(datetime(2026, 12, 1, 10, 8, 30))
-        self.assertEqual([z[0] for z in zones], ["The Twilight Strand", "Lioneye's Watch", "The Coast"])
-        self.assertEqual([z[1] for z in zones], [180, 60 + 60 + 30, 180])   # town twice, ticking now
-        self.assertEqual([z[2] for z in zones], [False, True, False])
+        rows = self.t.zone_times(datetime(2026, 12, 1, 10, 8, 30))
+        by_name = {r[0]: r for r in rows}
+        # every zone of the act is listed, in the usual order
+        self.assertEqual([r[0] for r in rows[:4]],
+                         ["The Twilight Strand", "Lioneye's Watch", "The Coast", "The Mud Flats"])
+        self.assertNotIn("The Fetid Pool", by_name)                        # optional, not visited
+        self.assertEqual(by_name["The Twilight Strand"][1:], (180, 180, False, True))
+        self.assertEqual(by_name["The Coast"][1:], (180, 420, False, True))   # left at 7:00 into the act
+        self.assertEqual(by_name["Lioneye's Watch"][1:3], (150, None))       # here now, ticking
+        self.assertTrue(by_name["Lioneye's Watch"][3])
+        self.assertEqual(by_name["The Mud Flats"][1:], (None, None, False, False))   # not yet
         # next act: act 1's zones are kept, the list starts over
         self.write(area("10:10:00", 13, "1_2_1", 5), load("10:10:02", "The Southern Forest"))
         self.assertEqual(len(self.t.run["act_history"]["1"]), 3)
-        self.assertEqual([z[0] for z in self.t.zone_times()], ["The Southern Forest"])
+        self.assertEqual(self.t.run["act_started_ts"], "2026/12/01 10:10:00")
+        self.assertTrue(self.t.zone_times()[0][3])                         # Southern Forest, here
+
+    def test_backfill_after_update_and_na_before_the_timer(self):
+        load = lambda t, name: line(t, f"[LOADING SCREEN] ({name}) Duration: 1200ms")
+        with open(self.log, "a") as f:     # played before the tracker knew about this run
+            f.writelines([area("09:00:00", 1, "1_1_1", 1), area("09:02:00", 2, "1_1_town", 2),
+                          area("09:05:00", 3, "1_1_2", 3), load("09:05:01", "The Coast"),
+                          area("09:08:00", 4, "1_1_3", 4), line("09:09:00", ": x")])
+        save = self.t.save_path
+        # timer started by hand at 09:04, the zones themselves weren't recorded
+        self.t.run.update(started=True, offset=os.path.getsize(self.log), last_ts="2026/12/01 09:09:00",
+                          act_started_ts="2026/12/01 09:04:00", campaign_time=300.0, act_zones=[], zone_now=None)
+        self.t.save()
+        again = Tracker(save)
+        rows = {r[0]: r for r in again.zone_times(datetime(2026, 12, 1, 9, 9, 0))}
+        self.assertEqual(rows["The Twilight Strand"][1:], (None, None, False, True))   # N/A
+        self.assertEqual(rows["Lioneye's Watch"][1:3], (60, 60))     # 09:04 -> 09:05 counted
+        self.assertEqual(rows["The Coast"][1:3], (180, 240))
+        self.assertTrue(rows["The Mud Flats"][3])
 
 
 if __name__ == "__main__":
