@@ -19,7 +19,7 @@ from tracker import ATLAS, Tracker
 BG = "#0f0f0f"
 CURRENT = "#1c3f8a"      # highlighted split
 TEXT = "#ffffff"
-GRAY = "#acacac"
+GRAY = "#c4c4c4"
 AHEAD = "#00cc36"
 BEHIND = "#cc1200"
 GOLD = "#d8af1f"
@@ -61,21 +61,27 @@ class App:
 
         self.title = tk.Label(root, text="", bg=BG, fg=TEXT, font=self.font(11, bold=True))
         self.title.pack(fill="x", pady=(8, 0))
-        self.subtitle = tk.Label(root, text="", bg=BG, fg=GRAY, font=self.font(9))
+        self.subtitle = tk.Label(root, text="", bg=BG, fg=GRAY, font=self.font(10))
         self.subtitle.pack(fill="x", pady=(0, 6))
 
         # 10 rows is enough for either list (10 acts / 4 voidstones)
         self.rows = []
+        self.obj_labels = []
         for i in range(10):
             row = tk.Frame(root, bg=BG)
             row.pack(fill="x")
             name = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
             name.pack(side="left", padx=8)
+            # used on the voidstone objective lines: one label per objective
+            objs = [tk.Label(row, bg=BG, font=self.font(9, bold=True), anchor="w") for _ in range(3)]
+            for o in objs:
+                o.pack(side="left", padx=(0, 10))
+            self.obj_labels.append(objs)
             time = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), width=8, anchor="e")
             time.pack(side="right", padx=8)
             delta = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), width=7, anchor="e")
             delta.pack(side="right")
-            for widget in (row, name, delta, time):
+            for widget in (row, name, delta, time, *objs):
                 widget.bind("<Button-1>", lambda e, i=i: self.row_clicked(i))
             self.rows.append((row, name, delta, time))
 
@@ -89,19 +95,19 @@ class App:
         for _ in range(6):
             row = tk.Frame(root, bg=BG)
             row.pack(fill="x", padx=8)
-            left = tk.Label(row, bg=BG, fg=TEXT, font=self.font(9), anchor="w")
+            left = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
             left.pack(side="left")
-            right = tk.Label(row, bg=BG, fg=TEXT, font=self.font(9), anchor="e")
+            right = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="e")
             right.pack(side="right")
             self.info.append((left, right))
 
         # Tiny bottom bar: version on the left, update status on the right
-        tk.Label(root, text="Not affiliated with Grinding Gear Games", bg=BG, fg="#555",
-                 font=self.font(7)).pack(side="bottom", pady=(0, 3))
+        tk.Label(root, text="Not affiliated with Grinding Gear Games", bg=BG, fg="#8a8a8a",
+                 font=self.font(8)).pack(side="bottom", pady=(0, 3))
         self.bar = tk.Frame(root, bg=BG)
         self.bar.pack(side="bottom", fill="x", padx=8)
-        tk.Label(self.bar, text=updater.version_text(), bg=BG, fg="#888", font=self.font(8)).pack(side="left")
-        self.update_label = tk.Label(self.bar, text="", bg=BG, fg="#888", font=self.font(8))
+        tk.Label(self.bar, text=updater.version_text(), bg=BG, fg="#b0b0b0", font=self.font(9)).pack(side="left")
+        self.update_label = tk.Label(self.bar, text="", bg=BG, fg="#b0b0b0", font=self.font(9))
         self.update_label.pack(side="right")
         self.update_label.config(cursor="hand2")
         self.update_label.bind("<Button-1>", lambda e: self.updater.check_now())   # click: check now
@@ -234,6 +240,8 @@ class App:
             time.config(width=0 if i % 2 else 8)
             k = i // 2
             if k >= len(ATLAS):
+                for o in self.obj_labels[i]:
+                    o.config(text="", bg=BG)
                 name.config(text="", font=self.font(10))
                 delta.config(text="")
                 time.config(text="")
@@ -257,15 +265,20 @@ class App:
                     time.config(text=f"{done}/{len(objs)}", fg=GRAY)
                     delta.config(text="")
             else:                                            # its objectives
-                parts = []
-                for label, d, total in objs:
-                    mark = "\u2713" if d == total else "\u25cb"
-                    count = f" {d}/{total}" if total > 1 else ""
-                    parts.append(f"{mark} {label}{count}")
-                all_done = stone in got or all(d == total for _, d, total in objs)
-                name.config(text="   " + "   ".join(parts), font=self.font(7), fg=AHEAD if all_done else GRAY)
+                name.config(text="", font=self.font(10))
+                for j, o in enumerate(self.obj_labels[i]):
+                    if j < len(objs):
+                        label, d, total = objs[j]
+                        count = f" {d}/{total}" if total > 1 and d < total else ""
+                        mark = "\u2713" if d == total else "\u2022"
+                        o.config(text=f"{mark} {label}{count}", bg=BG, fg=AHEAD if d == total else "#e6e6e6")
+                    else:
+                        o.config(text="", bg=BG)
                 delta.config(text="")
                 time.config(text="")
+                continue
+            for o in self.obj_labels[i]:
+                o.config(text="", bg=BG)
 
     def draw(self):
         t, run = self.tracker, self.tracker.run
@@ -306,6 +319,8 @@ class App:
             name.config(font=self.font(10))
             delta.config(width=7)
             time.config(width=8)
+            for o in self.obj_labels[i]:
+                o.config(text="", bg=CURRENT if i == current else BG)
             if i >= len(names):
                 for w in (row, name, delta, time):
                     w.config(bg=BG)
