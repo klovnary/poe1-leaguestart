@@ -55,6 +55,12 @@ LAB_NAMES = {"1": "Normal", "2": "Cruel", "3": "Merciless", "EndGame": "Eternal"
 CAMPAIGN_AREA = re.compile(r"^\d_(\d+)_")   # 1_3_5 = part 1, act 3, zone 5
 
 
+def in_campaign_zone(area):
+    """A story zone of Acts 1-10 (Karui Shores, the endgame town, doesn't count)."""
+    m = CAMPAIGN_AREA.match(area or "")
+    return bool(m) and int(m.group(1)) <= 10
+
+
 def save_folder():
     folder = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "LeagueStartTracker")
     os.makedirs(folder, exist_ok=True)
@@ -79,7 +85,8 @@ def new_run():
                                 # (seconds None = visited before the timer ran: "N/A")
         "act_started_ts": None, # when the current act started (log time)
         "act_history": {},      # act number -> its zone list, once the act is done
-        "zone_now": None,       # area id you're in
+        "zone_now": None,       # area id you're in (campaign zone list)
+        "area_now": None,       # area id you're in (anywhere)
         "area_level": 0,
         "campaign_time": 0.0,
         "atlas_time": 0.0,
@@ -108,6 +115,7 @@ class Tracker:
         self.save_path = save_path or os.path.join(save_folder(), "save.json")
         self.run, self.records, self.log_path = new_run(), new_records(), None
         self.window = None        # window size/position, e.g. "420x700+100+50"
+        self.previous_run = None  # the run a reset replaced
         if os.path.exists(self.save_path):
             with open(self.save_path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -115,6 +123,7 @@ class Tracker:
             self.records.update(data.get("records", {}))
             self.log_path = data.get("log_path")
             self.window = data.get("window")
+            self.previous_run = data.get("previous_run")
             if data.get("version", 1) < 2:
                 self._clear_bad_records()
         if self.run["character"] and not self.run["started"]:
@@ -144,7 +153,7 @@ class Tracker:
         temp = self.save_path + ".tmp"
         with open(temp, "w", encoding="utf-8") as f:
             json.dump({"version": 2, "run": self.run, "records": self.records, "log_path": self.log_path,
-                       "window": self.window}, f, indent=1)
+                       "window": self.window, "previous_run": self.previous_run}, f, indent=1)
         os.replace(temp, self.save_path)
 
     # ---------- where are we ----------
@@ -168,7 +177,8 @@ class Tracker:
         if phase == "done":
             return self.run["atlas_splits"][-1]
         t = self.run["campaign_time"] if phase == "campaign" else self.run["atlas_time"]
-        if self.run["started"] and self.run["last_ts"] and not self.run.get("paused"):
+        ticking = phase == "campaign" or not in_campaign_zone(self.run.get("area_now"))
+        if ticking and self.run["started"] and self.run["last_ts"] and not self.run.get("paused"):
             gap = ((now or datetime.now()) - datetime.strptime(self.run["last_ts"], TIME_FORMAT)).total_seconds()
             if 0 < gap <= MAX_GAP:
                 t += gap
@@ -182,13 +192,77 @@ class Tracker:
     # ---------- actions ----------
 
     def new_league(self, name):
-        """Manual reset from the menu (e.g. a restart, or a name like "Covens of Umbra HC")."""
+        """Manual reset from the menu (e.g. a restart, or a name like "Covens of Umbra HC").
+        The run being replaced is kept, so it can be brought back."""
+        self.previous_run = self.run
         self.run = new_run()
         self.run["league"] = name
         self.run["league_key"] = None   # taken from your next Twilight Strand (keeps your name)
         if self.log_path and os.path.exists(self.log_path):
             self.run["offset"] = os.path.getsize(self.log_path)   # skip old lines
         self.save()
+
+    def restore_previous_run(self):
+        """Undo the last reset: bring back the run it replaced (it carries on reading
+        the log from now on)."""
+        if not self.previous_run:
+            return False
+        offset, last_ts = self.run["offset"], self.run["last_ts"]
+        self.run, self.previous_run = self.previous_run, self.run
+        self.run["offset"], self.run["last_ts"] = offset, last_ts
+        self.save()
+        return True
+
+    def rebuild_league(self):
+        """Throw away the current run and replay this league from Client.txt, starting
+        at the league's first Twilight Strand (your first character). Later characters
+        don't restart it, and their campaign zones don't count as Atlas time.
+        Returns False if the log has nothing for this league."""
+        key = self.run.get("league_key") or leagues.league_at(datetime.now())
+        start = leagues.start_of(key)
+        if not start or not self.log_path or not os.path.exists(self.log_path):
+            return False
+        start_local = start.astimezone().strftime(TIME_FORMAT)
+        size = os.path.getsize(self.log_path)
+        # find where the league starts (walk back through the log in chunks)
+        pos, step = size, 8_000_000
+        with open(self.log_path, "rb") as f:
+            while pos > 0:
+                pos = max(0, pos - step)
+                f.seek(pos)
+                f.readline()
+                first = f.readline()[:19].decode("ascii", errors="ignore")
+                if LINE_TS.match(first) and first < start_local:
+                    break
+            f.seek(pos)
+            data = f.read(size - pos)
+        end = data.rfind(b"\n")
+        lines = data[:end + 1].decode("utf-8", errors="ignore").splitlines()
+        old_name = self.run["league"]
+        self.previous_run = self.run
+        self.run = new_run()
+        self.run["league_key"] = key
+        self.run["league"] = old_name if old_name and old_name != key else key
+        for line in lines:
+            if line[:19] >= start_local:
+                self.read_line(line)
+        self._use_pb_if_same_run()
+        self.run["offset"] = pos + end + 1
+        self.save()
+        return bool(self.run["started"])
+
+    def _use_pb_if_same_run(self):
+        """The log doesn't record pauses. If the rebuilt campaign is your PB run
+        (nearly every act matches to the second), take the act times from the PB,
+        which were timed with your pauses, and keep the Atlas part starting from it."""
+        pb, splits = self.records.get("campaign_pb"), self.run["campaign_splits"]
+        if not pb or len(pb) != len(splits) or len(splits) != 10:
+            return
+        seg = lambda lst, i: lst[i] - (lst[i - 1] if i else 0)
+        same = sum(abs(seg(pb, i) - seg(splits, i)) <= 1 for i in range(10))
+        if same >= 8:
+            self.run["campaign_splits"] = list(pb)
+            self.run["campaign_time"] = pb[-1]
 
     def _auto_new_run(self, league):
         """A new character entered The Twilight Strand in a different league: fresh run.
@@ -472,7 +546,7 @@ class Tracker:
                         if z[0] == run.get("zone_now"):
                             z[2] = (z[2] or 0) + gap
                             break
-                elif self.phase() == "atlas":
+                elif self.phase() == "atlas" and not in_campaign_zone(run.get("area_now")):
                     run["atlas_time"] += gap
         run["last_ts"] = line[:19]
 
@@ -523,6 +597,7 @@ class Tracker:
                     run["act_started_ts"] = line[:19]
                 run["started"] = True
             run["area_level"] = int(m.group(1))
+            run["area_now"] = m.group(2)
             if run["started"]:
                 self._entered_area(m.group(2), int(m.group(1)), m.group(3))
 

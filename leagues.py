@@ -36,3 +36,11 @@ def next_league(when, within_days=7):
         if 0 < wait <= within_days * 86400:
             return name, wait
     return None
+
+
+def start_of(name):
+    """When a league started (UTC), or None if it isn't in the list."""
+    for league, start in LEAGUES:
+        if league == name:
+            return datetime.strptime(start, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+    return None

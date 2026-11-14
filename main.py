@@ -160,6 +160,8 @@ class App:
         self.menu.add_command(label="Undo last voidstone", command=self.undo)
         self.menu.add_separator()
         self.menu.add_command(label="Reset run...", command=self.new_league)
+        self.menu.add_command(label="Undo last reset", command=self.undo_reset)
+        self.menu.add_command(label="Rebuild this league from the log...", command=self.rebuild)
         self.menu.add_command(label="Find Client.txt...", command=self.choose_log)
         self.menu.add_checkbutton(label="Always on top", variable=self.on_top,
                                   command=lambda: root.attributes("-topmost", self.on_top.get()))
@@ -230,6 +232,23 @@ class App:
                                       initialvalue=leagues.league_at(datetime.now()))
         if name:
             self.tracker.new_league(name.strip())
+
+    def undo_reset(self):
+        if not self.tracker.restore_previous_run():
+            messagebox.showinfo("Undo last reset", "There's no earlier run to bring back.")
+
+    def rebuild(self):
+        """Replay this league from Client.txt from your first character's Twilight Strand:
+        acts, zones, maps, labs and objectives. The current run is kept for Undo."""
+        if not messagebox.askyesno(
+                "Rebuild this league",
+                "Rebuild this league's run from the game's log, starting with your first "
+                "character?\n\nUse this to go back to your first character after a reset. "
+                "Later characters don't count. The current run can be brought back with "
+                "'Undo last reset'."):
+            return
+        if not self.tracker.rebuild_league():
+            messagebox.showinfo("Rebuild this league", "Couldn't find this league in Client.txt.")
 
     def choose_log(self):
         path = filedialog.askopenfilename(title="Find Client.txt (in Path of Exile's logs folder)",

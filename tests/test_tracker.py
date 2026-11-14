@@ -239,6 +239,36 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(rows["The Coast"][1:3], (180, 240))
         self.assertTrue(rows["The Mud Flats"][3])
 
+    def test_rebuild_league_ignores_a_later_reroll(self):
+        lines = [area("10:00:00", 1, "1_1_1", 1)]
+        m = 0
+        for act in range(2, 11):
+            m += 2
+            lines.append(area(f"10:{m:02d}:00", 30, f"{1 if act < 6 else 2}_{act}_1", act))
+        lines += [area("10:22:00", 68, "2_11_town", 50),
+                  area("10:23:00", 68, "MapWorldsPit", 60), line("10:26:00", ": x"),
+                  area("10:27:00", 1, "1_1_1", 70), line("10:30:00", ": x"),       # reroll: Act 1
+                  area("10:31:00", 2, "1_1_town", 71), line("10:33:00", ": x"),
+                  area("10:34:00", 68, "MapWorldsMarshes", 80), line("10:36:00", ": x")]
+        with open(self.log, "a") as f:
+            f.writelines(lines)
+        self.t.run["league_key"] = "Covens of Umbra"
+        import leagues
+        old = leagues.LEAGUES
+        leagues.LEAGUES = old + [("Test League", "2026-11-30 00:00")]   # before the fake log in any time zone
+        try:
+            self.t.run["league_key"] = "Test League"
+            self.t.rebuild_league()
+        finally:
+            leagues.LEAGUES = old
+        r = self.t.run
+        self.assertEqual(len(r["campaign_splits"]), 10)
+        self.assertEqual(r["campaign_splits"][0], 120)
+        self.assertEqual(len(r["map_seeds"]), 2)
+        # atlas: 10:22-10:27 (5 min, not the reroll's Act 1 zones) + 10:34-10:36
+        self.assertEqual(r["atlas_time"], 300 + 120)
+        self.assertIsNotNone(self.t.previous_run)
+
 
 if __name__ == "__main__":
     unittest.main()
