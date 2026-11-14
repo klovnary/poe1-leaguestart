@@ -191,6 +191,18 @@ class Tracker:
         self.run["offset"] = os.path.getsize(path)
         self.save()
 
+    def start_now(self):
+        """Start the timer by hand (e.g. a new character already past The Twilight Strand)."""
+        run = self.run
+        if run["started"]:
+            return
+        run["started"] = True
+        run["last_ts"] = datetime.now().strftime(TIME_FORMAT)   # count from this moment
+        if not run["league_key"]:
+            run["league_key"] = leagues.league_at(datetime.now())
+            run["league"] = run["league"] or run["league_key"]
+        self.save()
+
     def toggle_pause(self):
         self.run["paused"] = not self.run.get("paused")
         self.save()

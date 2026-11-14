@@ -191,6 +191,13 @@ class TrackerTest(unittest.TestCase):
         self.t.undo_voidstone()
         self.assertEqual(self.t.got_voidstones(), [])
 
+    def test_start_timer_by_hand(self):
+        self.t.new_league("Reroll")
+        self.t.start_now()
+        self.assertTrue(self.t.run["started"])
+        self.assertTrue(self.t.run["league_key"])
+        self.assertEqual(self.t.run["league"], "Reroll")
+
 
 if __name__ == "__main__":
     unittest.main()

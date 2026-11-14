@@ -122,6 +122,7 @@ class App:
         self.updater.check_in_background()
 
         self.menu = tk.Menu(root, tearoff=0)
+        self.menu.add_command(label="Start timer now", command=self.tracker.start_now)
         self.menu.add_command(label="Pause / resume (P)", command=self.tracker.toggle_pause)
         self.menu.add_command(label="Undo last voidstone", command=self.undo)
         self.menu.add_separator()
