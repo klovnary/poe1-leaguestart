@@ -71,7 +71,7 @@ class App:
         self.obj_labels = []
         for i in range(16):   # 10 acts + up to 6 zones of the open act
             row = tk.Frame(root, bg=BG)
-            row.pack(fill="x")
+            row.pack(fill="x")   # (re-packed by show_rows so only used rows take space)
             name = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
             name.pack(side="left", padx=8)
             # used on the voidstone objective lines: one label per objective
@@ -105,9 +105,9 @@ class App:
 
         # Tiny bottom bar: version on the left, update status on the right
         tk.Label(root, text="Not affiliated with Grinding Gear Games", bg=BG, fg="#8a8a8a",
-                 font=self.font(8)).pack(side="bottom", pady=(0, 3))
+                 font=self.font(8)).pack(side="bottom", pady=(0, 3), before=self.title)
         self.bar = tk.Frame(root, bg=BG)
-        self.bar.pack(side="bottom", fill="x", padx=8)
+        self.bar.pack(side="bottom", fill="x", padx=8, before=self.title)
         tk.Label(self.bar, text=updater.version_text(), bg=BG, fg="#b0b0b0", font=self.font(9)).pack(side="left")
         self.update_label = tk.Label(self.bar, text="", bg=BG, fg="#b0b0b0", font=self.font(9))
         self.update_label.pack(side="right")
@@ -229,6 +229,16 @@ class App:
         finally:
             self.root.destroy()
 
+    def show_rows(self, n):
+        """Only the first n split rows take up space; the rest are hidden."""
+        if n == getattr(self, "rows_shown", None):
+            return
+        self.rows_shown = n
+        for row, *_ in self.rows:
+            row.pack_forget()
+        for row, *_ in self.rows[:n]:
+            row.pack(fill="x", before=self.timer)
+
     def _draw_campaign(self, names, splits, pb, golds, now_time, current):
         """Acts 1-10. The act you're in opens up to show its zones (time spent in
         each, the one you're in highlighted); when it's done it folds back into
@@ -241,6 +251,7 @@ class App:
                 older = zones[:len(zones) - (MAX_ZONE_ROWS - 1)]
                 zones = [(f"+{len(older)} earlier zones", sum(z[1] for z in older), False)] + zones[-(MAX_ZONE_ROWS - 1):]
             specs[current + 1:current + 1] = [("zone", z) for z in zones]
+        self.show_rows(len(specs))
 
         for i, (row, name, delta, time) in enumerate(self.rows):
             delta.config(width=7)
@@ -301,6 +312,7 @@ class App:
         1st/2nd/3rd/4th voidstone (whichever one it was)."""
         t = self.tracker
         got = t.got_voidstones()
+        self.show_rows(2 * len(ATLAS))
         for i, (row, name, delta, time) in enumerate(self.rows):
             for w in (row, name, delta, time):
                 w.config(bg=BG)
@@ -438,7 +450,8 @@ class App:
 
         self.update_label.config(text=self.updater.status)
         if self.updater.ready and not self.update_shown:
-            self.update_button.pack(side="bottom", fill="x", padx=8, pady=(6, 4), after=self.bar)
+            # packed before the title so it always gets room, right above the version line
+            self.update_button.pack(side="bottom", fill="x", padx=8, pady=(6, 4), before=self.title)
             self.update_shown = True
             self.draw_update_button()
         self.root.after(200, self.draw)
