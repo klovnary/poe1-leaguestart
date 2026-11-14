@@ -52,7 +52,7 @@ class App:
         self.tracker = Tracker()
         root.title("League Start")
         root.configure(bg=BG)
-        root.geometry(self.tracker.window or "300x500")
+        root.geometry(self.tracker.window or "300x540")
         root.attributes("-topmost", True)
         self.on_top = tk.BooleanVar(value=True)
         self.fonts = {}           # (size, bold) -> font; all resized together with the window
@@ -86,7 +86,7 @@ class App:
         self.segment.pack(fill="x", padx=8)
 
         self.info = []
-        for _ in range(3):
+        for _ in range(5):
             row = tk.Frame(root, bg=BG)
             row.pack(fill="x", padx=8)
             left = tk.Label(row, bg=BG, fg=TEXT, font=self.font(9), anchor="w")
@@ -103,9 +103,13 @@ class App:
         tk.Label(self.bar, text=updater.version_text(), bg=BG, fg="#888", font=self.font(8)).pack(side="left")
         self.update_label = tk.Label(self.bar, text="", bg=BG, fg="#888", font=self.font(8))
         self.update_label.pack(side="right")
-        # Big gold button, only shown once an update is downloaded
-        self.update_button = tk.Label(root, text="\u2b06  Update ready - click to restart", bg=GOLD, fg="#000",
-                                      font=self.font(10, bold=True), cursor="hand2", pady=6)
+        self.update_label.config(cursor="hand2")
+        self.update_label.bind("<Button-1>", lambda e: self.updater.check_now())   # click: check now
+        # Rounded gold button, only shown once an update is downloaded
+        self.update_button = tk.Canvas(root, bg=BG, highlightthickness=0, cursor="hand2", height=40)
+        self.update_button.bind("<Configure>", lambda e: self.draw_update_button())
+        self.update_button.bind("<Enter>", lambda e: self.draw_update_button(hover=True))
+        self.update_button.bind("<Leave>", lambda e: self.draw_update_button())
         self.update_button.bind("<Button-1>", lambda e: self.restart_for_update())
         self.update_shown = False
         self.updater = updater.Updater()
@@ -143,13 +147,15 @@ class App:
     def window_resized(self, event):
         if event.widget is not self.root:
             return
-        # 300x500 is the normal size; bigger window = bigger text
-        scale = max(0.7, min(event.width / 300, event.height / 500, 4.0))
+        # 300x540 is the normal size; bigger window = bigger text
+        scale = max(0.7, min(event.width / 300, event.height / 540, 4.0))
         if abs(scale - self.scale) < 0.03:
             return
         self.scale = scale
         for (size, bold), f in self.fonts.items():
             f.configure(size=max(6, round(size * scale)))
+        if self.update_shown:
+            self.draw_update_button()
 
     # ---------- actions ----------
 
@@ -179,6 +185,23 @@ class App:
                                           filetypes=[("Client.txt", "Client.txt"), ("Text", "*.txt")])
         if path:
             self.tracker.set_log_path(path)
+
+    def draw_update_button(self, hover=False):
+        c = self.update_button
+        title, small = self.font(10, bold=True), self.font(8)
+        h = title.metrics("linespace") + small.metrics("linespace") + 14
+        c.config(height=h)
+        w = max(c.winfo_width(), 50)
+        c.delete("all")
+        r, x1, y1, x2, y2 = 10, 1, 1, w - 1, h - 1
+        points = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
+                  x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+        c.create_polygon(points, smooth=True, fill="#e8c35a" if hover else GOLD, outline="")
+        mid = h // 2
+        c.create_text(w // 2, mid - small.metrics("linespace") // 2, text="\u2b06  Update ready",
+                      font=title, fill="#111")
+        c.create_text(w // 2, mid + title.metrics("linespace") // 2, text="click to restart \u00b7 your run is kept",
+                      font=small, fill="#3a2f12")
 
     def restart_for_update(self):
         if self.updater.ready:
@@ -294,14 +317,35 @@ class App:
         else:
             tier = f"  ·  T{run['best_tier']}" if run["best_tier"] else ""
             lines.append((f"Maps {len(run['map_seeds'])}{tier}", f"Total {fmt(t.total())}", TEXT))
+        # Labyrinth: time in each lab (ticks while you're in one), and your bests
+        labs = run.get("labs", {})
+        if labs:
+            parts = []
+            for name in ("Normal", "Cruel", "Merciless", "Eternal"):
+                if name == "Eternal" and name not in labs:
+                    continue
+                lab_t = t.lab_time(name)
+                if lab_t is None:
+                    parts.append(f"{name[0]} -")
+                else:
+                    live = "" if labs[name]["done"] else "\u25b8"
+                    parts.append(f"{name[0]} {fmt(lab_t)}{live}")
+            lines.append(("Labs", "  ".join(parts), GOLD if run.get("lab_now") else TEXT))
+        bests = t.records.get("lab_best", {})
+        if bests:
+            lines.append(("Lab bests", "  ".join(f"{n[0]} {fmt(bests[n])}" for n in
+                                                  ("Normal", "Cruel", "Merciless", "Eternal") if n in bests), GRAY))
+        while len(lines) < len(self.info):
+            lines.append(("", "", TEXT))
         for (left, right), (a, b, color) in zip(self.info, lines):
             left.config(text=a)
             right.config(text=b, fg=color)
 
         self.update_label.config(text=self.updater.status)
         if self.updater.ready and not self.update_shown:
-            self.update_button.pack(side="bottom", fill="x", padx=8, pady=(4, 2), after=self.bar)
+            self.update_button.pack(side="bottom", fill="x", padx=8, pady=(6, 4), after=self.bar)
             self.update_shown = True
+            self.draw_update_button()
         self.root.after(200, self.draw)
 
 

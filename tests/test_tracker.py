@@ -155,6 +155,26 @@ class TrackerTest(unittest.TestCase):
         self.write(line("10:04:00", ": x"))
         self.assertEqual(self.t.run["campaign_time"], 120)
 
+    def test_labyrinth(self):
+        self.write(area("10:00:00", 1, "1_1_1", 1),
+                   area("11:00:00", 33, "Labyrinth_Airlock", 2),           # Aspirants' Plaza: not timed
+                   area("11:01:00", 33, "1_Labyrinth_OH_straight", 3),
+                   area("11:04:00", 33, "1_Labyrinth_boss_1", 4),
+                   area("11:05:00", 33, "Labyrinth_Airlock", 5))           # died / left early
+        lab = self.t.run["labs"]["Normal"]
+        self.assertFalse(lab["done"])
+        self.assertEqual(lab["time"], 240)
+        self.write(area("11:10:00", 33, "1_Labyrinth_OH_straight", 6),
+                   area("11:14:00", 33, "1_Labyrinth_boss_2_end", 7),
+                   area("11:16:00", 13, "1_3_town", 8))                    # left Izaro's last room = done
+        self.assertTrue(lab["done"])
+        self.assertEqual(lab["time"], 240 + 360)
+        self.assertEqual(self.t.records["lab_best"]["Normal"], 600)
+        self.assertIsNone(self.t.run["lab_now"])
+        # time after finishing doesn't add to it
+        self.write(area("11:20:00", 13, "1_3_1", 9))
+        self.assertEqual(lab["time"], 600)
+
 
 if __name__ == "__main__":
     unittest.main()

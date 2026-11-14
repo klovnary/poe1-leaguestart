@@ -31,6 +31,9 @@ LEVEL_UP = re.compile(r"\] : (\S+) \(([^)]+)\) is now level (\d+)$")
 DEATH = re.compile(r"\] : (\S+) has been slain\.$")
 LOADING = re.compile(r"\[LOADING SCREEN\] \((.+)\) Duration")   # gives the zone's real name
 JOINED = re.compile(r"\] : (\S+) has joined the area\.$")
+# Labyrinth rooms: 1_ Normal, 2_ Cruel, 3_ Merciless, EndGame_ Eternal. Izaro's last room is boss_2_end.
+LAB_AREA = re.compile(r"^(1|2|3|EndGame)_Labyrinth_(.+)$")
+LAB_NAMES = {"1": "Normal", "2": "Cruel", "3": "Merciless", "EndGame": "Eternal"}
 CAMPAIGN_AREA = re.compile(r"^\d_(\d+)_")   # 1_3_5 = part 1, act 3, zone 5
 
 
@@ -59,6 +62,9 @@ def new_run():
         "atlas_time": 0.0,
         "campaign_splits": [],  # time at the end of each act
         "atlas_splits": [],     # atlas time at each voidstone
+        "labs": {},             # "Normal": {"time": seconds, "done": True/False}
+        "lab_now": None,        # the lab you're in right now
+        "lab_final": False,     # in Izaro's last room (leaving it = lab done)
         "map_seeds": [],
         "best_tier": 0,
     }
@@ -68,6 +74,7 @@ def new_records():
     return {
         "campaign_pb": None, "atlas_pb": None,                 # split times of your best run
         "campaign_gold": [None] * 10, "atlas_gold": [None] * 4,  # best time for each segment
+        "lab_best": {},                                          # best time for each lab
     }
 
 
@@ -195,6 +202,37 @@ class Tracker:
         if len(splits) == len(golds) and (pb is None or time < pb[-1]):
             self.records[f"{part}_pb"] = list(splits)
 
+    def _track_lab(self, area):
+        run = self.run
+        m = LAB_AREA.match(area)
+        if m:
+            name = LAB_NAMES[m.group(1)]
+            run["labs"].setdefault(name, {"time": 0.0, "done": False})
+            run["lab_now"] = name
+            run["lab_final"] = m.group(2).startswith("boss_2_end")
+            return
+        # Left the lab. Leaving Izaro's last room means you beat him.
+        name = run.get("lab_now")
+        if name and run.get("lab_final") and not run["labs"][name]["done"]:
+            run["labs"][name]["done"] = True
+            t = run["labs"][name]["time"]
+            best = self.records["lab_best"].get(name)
+            if best is None or t < best:
+                self.records["lab_best"][name] = t
+        run["lab_now"], run["lab_final"] = None, False
+
+    def lab_time(self, name, now=None):
+        """Time spent in a lab, ticking along while you're in it."""
+        lab = self.run["labs"].get(name)
+        if not lab:
+            return None
+        t = lab["time"]
+        if self.run.get("lab_now") == name and not lab["done"] and not self.run.get("paused") and self.run["last_ts"]:
+            gap = ((now or datetime.now()) - datetime.strptime(self.run["last_ts"], TIME_FORMAT)).total_seconds()
+            if 0 < gap <= MAX_GAP:
+                t += gap
+        return t
+
     # ---------- reading the log ----------
 
     def poll(self):
@@ -235,6 +273,9 @@ class Tracker:
         if run["last_ts"] and run["started"]:
             gap = (ts - datetime.strptime(run["last_ts"], TIME_FORMAT)).total_seconds()
             if 0 < gap <= MAX_GAP and not run.get("paused"):
+                lab = run["labs"].get(run.get("lab_now") or "")
+                if lab and not lab["done"]:
+                    lab["time"] += gap
                 if self.phase() == "campaign":
                     run["campaign_time"] += gap
                 elif self.phase() == "atlas":
@@ -288,6 +329,7 @@ class Tracker:
 
     def _entered_area(self, area, level, seed):
         run = self.run
+        self._track_lab(area)
         is_map = area.startswith("MapWorlds") and level >= 68
 
         if self.phase() == "campaign":

@@ -47,7 +47,7 @@ def is_app_file(path):
     return "/" not in path and path.endswith(".py")
 
 
-CHECK_EVERY = 30 * 60   # seconds between update checks
+CHECK_EVERY = 5 * 60    # seconds between update checks
 
 
 def version_text():
@@ -69,12 +69,28 @@ class Updater:
 
     def check_in_background(self):
         if installed_copy():
+            self._lock = threading.Lock()
             threading.Thread(target=self._loop, daemon=True).start()
+
+    def check_now(self):
+        """Clicking the status text: check right away (in the background)."""
+        if installed_copy() and not self.ready:
+            threading.Thread(target=self._check, daemon=True).start()
 
     def _loop(self):
         while not self.ready:
-            self._update()
+            self._check()
             time.sleep(CHECK_EVERY)
+
+    def _check(self):
+        if not self._lock.acquire(blocking=False):   # a check is already running
+            return
+        try:
+            self._update()
+            if not self.ready and self.status == "up to date":
+                self.status = "up to date \u00b7 checked " + time.strftime("%I:%M %p").lstrip("0")
+        finally:
+            self._lock.release()
 
     def _update(self):
         self.status = "checking for updates..."
