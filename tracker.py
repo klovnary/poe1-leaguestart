@@ -72,6 +72,9 @@ def new_run():
         "others": [],           # party members (their level ups/deaths are ignored)
         "act": 1,
         "zone": "",             # where you are now (from the loading screen line)
+        "act_zones": [],        # zones of the current act: [area id, name, seconds], in visit order
+        "act_history": {},      # act number -> its zone list, once the act is done
+        "zone_now": None,       # area id you're in
         "area_level": 0,
         "campaign_time": 0.0,
         "atlas_time": 0.0,
@@ -258,6 +261,27 @@ class Tracker:
         if len(splits) == len(golds) and (pb is None or time < pb[-1]):
             self.records[f"{part}_pb"] = list(splits)
 
+    def _close_act_zones(self):
+        """The act is done: keep its zone list and start a fresh one."""
+        run = self.run
+        run.setdefault("act_history", {})[str(run["act"])] = run.get("act_zones", [])
+        run["act_zones"] = []
+        run["zone_now"] = None
+
+    def zone_times(self, now=None):
+        """[(name, seconds, is_current), ...] for the current act, the zone you're in ticking live."""
+        run = self.run
+        live = 0.0
+        if run["started"] and run["last_ts"] and not run.get("paused"):
+            gap = ((now or datetime.now()) - datetime.strptime(run["last_ts"], TIME_FORMAT)).total_seconds()
+            if 0 < gap <= MAX_GAP:
+                live = gap
+        rows = []
+        for area, name, secs in run.get("act_zones", []):
+            here = area == run.get("zone_now")
+            rows.append((name or area, secs + (live if here else 0), here))
+        return rows
+
     def _track_lab(self, area):
         run = self.run
         m = LAB_AREA.match(area)
@@ -334,6 +358,10 @@ class Tracker:
                     lab["time"] += gap
                 if self.phase() == "campaign":
                     run["campaign_time"] += gap
+                    for z in run.get("act_zones", []):
+                        if z[0] == run.get("zone_now"):
+                            z[2] += gap
+                            break
                 elif self.phase() == "atlas":
                     run["atlas_time"] += gap
         run["last_ts"] = line[:19]
@@ -364,6 +392,9 @@ class Tracker:
         m = LOADING.search(line)
         if m:
             run["zone"] = m.group(1)
+            for z in run.get("act_zones", []):
+                if z[0] == run.get("zone_now") and not z[1]:
+                    z[1] = m.group(1)
             return
 
         m = GENERATING.search(line)
@@ -395,9 +426,16 @@ class Tracker:
             act = int(act_match.group(1)) if act_match else None
             if act == run["act"] + 1 and act <= 10:
                 self._split("campaign", run["campaign_time"])
+                self._close_act_zones()
                 run["act"] = act
             elif run["act"] == 10 and (act == 11 or is_map):   # epilogue or first map = Act 10 done
                 self._split("campaign", run["campaign_time"])
+                self._close_act_zones()
+            if self.phase() == "campaign":
+                zones = run.setdefault("act_zones", [])
+                if not any(z[0] == area for z in zones):
+                    zones.append([area, "", 0.0])
+                run["zone_now"] = area
 
         if self.phase() == "atlas" and is_map and seed not in run["map_seeds"]:
             run["map_seeds"].append(seed)

@@ -198,6 +198,21 @@ class TrackerTest(unittest.TestCase):
         self.assertTrue(self.t.run["league_key"])
         self.assertEqual(self.t.run["league"], "Reroll")
 
+    def test_zones_in_the_current_act(self):
+        load = lambda t, name: line(t, f"[LOADING SCREEN] ({name}) Duration: 1200ms")
+        self.write(area("10:00:00", 1, "1_1_1", 1), load("10:00:02", "The Twilight Strand"),
+                   area("10:03:00", 2, "1_1_town", 2), load("10:03:02", "Lioneye's Watch"),
+                   area("10:04:00", 3, "1_1_2", 3), load("10:04:02", "The Coast"),
+                   area("10:07:00", 2, "1_1_town", 4), line("10:08:00", ": x"))
+        zones = self.t.zone_times(datetime(2026, 12, 1, 10, 8, 30))
+        self.assertEqual([z[0] for z in zones], ["The Twilight Strand", "Lioneye's Watch", "The Coast"])
+        self.assertEqual([z[1] for z in zones], [180, 60 + 60 + 30, 180])   # town twice, ticking now
+        self.assertEqual([z[2] for z in zones], [False, True, False])
+        # next act: act 1's zones are kept, the list starts over
+        self.write(area("10:10:00", 13, "1_2_1", 5), load("10:10:02", "The Southern Forest"))
+        self.assertEqual(len(self.t.run["act_history"]["1"]), 3)
+        self.assertEqual([z[0] for z in self.t.zone_times()], ["The Southern Forest"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,8 @@ AHEAD = "#00cc36"
 BEHIND = "#cc1200"
 GOLD = "#d8af1f"
 FONT = "Segoe UI"
+ZONE_BG = "#13213f"      # zones under the open act
+MAX_ZONE_ROWS = 6
 
 
 def fmt(seconds, sign=False):
@@ -52,7 +54,7 @@ class App:
         self.tracker = Tracker()
         root.title("League Start")
         root.configure(bg=BG)
-        root.geometry(self.tracker.window or "300x560")
+        root.geometry(self.tracker.window or "300x700")
         root.attributes("-topmost", True)
         self.on_top = tk.BooleanVar(value=True)
         self.fonts = {}           # (size, bold) -> font; all resized together with the window
@@ -67,7 +69,7 @@ class App:
         # 10 rows is enough for either list (10 acts / 4 voidstones)
         self.rows = []
         self.obj_labels = []
-        for i in range(10):
+        for i in range(16):   # 10 acts + up to 6 zones of the open act
             row = tk.Frame(root, bg=BG)
             row.pack(fill="x")
             name = tk.Label(row, bg=BG, fg=TEXT, font=self.font(10), anchor="w")
@@ -152,8 +154,8 @@ class App:
     def window_resized(self, event):
         if event.widget is not self.root:
             return
-        # 300x560 is the normal size; bigger window = bigger text
-        scale = max(0.7, min(event.width / 300, event.height / 560, 4.0))
+        # 300x700 is the normal size; bigger window = bigger text
+        scale = max(0.7, min(event.width / 300, event.height / 700, 4.0))
         if abs(scale - self.scale) < 0.03:
             return
         self.scale = scale
@@ -227,6 +229,72 @@ class App:
         finally:
             self.root.destroy()
 
+    def _draw_campaign(self, names, splits, pb, golds, now_time, current):
+        """Acts 1-10. The act you're in opens up to show its zones (time spent in
+        each, the one you're in highlighted); when it's done it folds back into
+        one line with the act's total."""
+        run = self.tracker.run
+        specs = [("act", i) for i in range(len(names))]
+        if current is not None and run["started"]:
+            zones = self.tracker.zone_times()
+            if len(zones) > MAX_ZONE_ROWS:
+                older = zones[:len(zones) - (MAX_ZONE_ROWS - 1)]
+                zones = [(f"+{len(older)} earlier zones", sum(z[1] for z in older), False)] + zones[-(MAX_ZONE_ROWS - 1):]
+            specs[current + 1:current + 1] = [("zone", z) for z in zones]
+
+        for i, (row, name, delta, time) in enumerate(self.rows):
+            delta.config(width=7)
+            time.config(width=8)
+            for o in self.obj_labels[i]:
+                o.config(text="")
+            if i >= len(specs):
+                for w in (row, name, delta, time, *self.obj_labels[i]):
+                    w.config(bg=BG)
+                name.config(text="", font=self.font(10))
+                delta.config(text="")
+                time.config(text="")
+                continue
+            kind, value = specs[i]
+            if kind == "zone":                           # a zone of the open act
+                zone_name, secs, here = value
+                for w in (row, name, delta, time, *self.obj_labels[i]):
+                    w.config(bg=ZONE_BG)
+                color = GOLD if here else "#d8d8d8"
+                name.config(text=("\u25b8 " if here else "   ") + zone_name, font=self.font(9), fg=color)
+                time.config(text=fmt(secs), font=self.font(9), fg=color)
+                delta.config(text="")
+                continue
+
+            a = value                                    # an act
+            bg = CURRENT if a == current else BG
+            for w in (row, name, delta, time, *self.obj_labels[i]):
+                w.config(bg=bg)
+            name.config(text=names[a], font=self.font(10), fg=TEXT)
+            time.config(font=self.font(10))
+            # Each act shows how long it took on its own (not a running total),
+            # and the +/- compares it with the same act of your PB run.
+            pb_seg = (pb[a] - (pb[a - 1] if a else 0)) if pb else None
+            if a < len(splits):                          # done
+                segment = splits[a] - (splits[a - 1] if a else 0)
+                time.config(text=fmt(segment), fg=TEXT)
+                if golds[a] is not None and segment <= golds[a] and pb:
+                    delta.config(text=fmt(segment - pb_seg, sign=True), fg=GOLD)
+                elif pb:
+                    diff = segment - pb_seg
+                    delta.config(text=fmt(diff, sign=True), fg=AHEAD if diff <= 0 else BEHIND)
+                else:
+                    delta.config(text="", fg=TEXT)
+            elif a == current and run["started"]:        # running now
+                live = now_time - (splits[-1] if splits else 0)
+                time.config(text=fmt(live), fg=TEXT)
+                if pb_seg is not None and live > pb_seg:
+                    delta.config(text=fmt(live - pb_seg, sign=True), fg=BEHIND)
+                else:
+                    delta.config(text="")
+            else:                                        # still to come: your PB's time for it
+                time.config(text=fmt(pb_seg) if pb_seg is not None else "-", fg=GRAY)
+                delta.config(text="")
+
     def _draw_voidstones(self, splits, pb, golds):
         """Atlas part: each voidstone on a row, its objectives on the line below.
         Rows show the atlas time when you got it; +/- is against your PB's
@@ -238,7 +306,7 @@ class App:
                 w.config(bg=BG)
             # objective lines use the whole row; voidstone rows keep the time columns
             delta.config(width=0 if i % 2 else 7)
-            time.config(width=0 if i % 2 else 8)
+            time.config(width=0 if i % 2 else 8, font=self.font(10))
             k = i // 2
             if k >= len(ATLAS):
                 for o in self.obj_labels[i]:
@@ -314,48 +382,8 @@ class App:
         # Splits
         if phase != "campaign":
             self._draw_voidstones(splits, pb, golds)
-        for i, (row, name, delta, time) in enumerate(self.rows):
-            if phase != "campaign":
-                break
-            name.config(font=self.font(10))
-            delta.config(width=7)
-            time.config(width=8)
-            for o in self.obj_labels[i]:
-                o.config(text="", bg=CURRENT if i == current else BG)
-            if i >= len(names):
-                for w in (row, name, delta, time):
-                    w.config(bg=BG)
-                name.config(text="")
-                delta.config(text="")
-                time.config(text="")
-                continue
-            bg = CURRENT if i == current else BG
-            for w in (row, name, delta, time):
-                w.config(bg=bg)
-            name.config(text=names[i])
-            # Each row shows how long that act/voidstone took on its own (not a running total),
-            # and the +/- compares it with the same segment of your PB run.
-            pb_seg = (pb[i] - (pb[i - 1] if i else 0)) if pb else None
-            if i < len(splits):                       # done
-                segment = splits[i] - (splits[i - 1] if i else 0)
-                time.config(text=fmt(segment), fg=TEXT)
-                if golds[i] is not None and segment <= golds[i] and pb:
-                    delta.config(text=fmt(segment - pb_seg, sign=True), fg=GOLD)
-                elif pb:
-                    diff = segment - pb_seg
-                    delta.config(text=fmt(diff, sign=True), fg=AHEAD if diff <= 0 else BEHIND)
-                else:
-                    delta.config(text="", fg=TEXT)
-            elif i == current and run["started"]:     # running now
-                live = now_time - (splits[-1] if splits else 0)
-                time.config(text=fmt(live), fg=TEXT)
-                if pb_seg is not None and live > pb_seg:
-                    delta.config(text=fmt(live - pb_seg, sign=True), fg=BEHIND)
-                else:
-                    delta.config(text="")
-            else:                                     # still to come: your PB's time for it
-                time.config(text=fmt(pb_seg) if pb_seg is not None else "-", fg=GRAY)
-                delta.config(text="")
+        if phase == "campaign":
+            self._draw_campaign(names, splits, pb, golds, now_time, current)
 
         # Big timer
         if not run["started"] or run.get("paused"):
